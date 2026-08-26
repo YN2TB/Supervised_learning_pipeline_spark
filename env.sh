@@ -20,7 +20,7 @@ export PYSPARK_DRIVER_PYTHON='D:\BigData\.venv\Scripts\python.exe'
 
 # So `import custom_transformers` resolves when a saved PipelineModel is
 # deserialized (Windows uses ';' as the PYTHONPATH separator).
-export PYTHONPATH="D:\BigData;${PYTHONPATH}"
+export PYTHONPATH="D:\BigData;${PYTHONPATH:-}"
 
 # --- POSIX-style paths: consumed by bash itself ---
 export PATH="/d/BigData/.jdk/jdk-17.0.20.1+1/bin:/d/BigData/.hadoop/bin:/d/BigData/.venv/Scripts:${PATH}"
