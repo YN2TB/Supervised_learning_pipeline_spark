@@ -1,0 +1,37 @@
+# --- Local runtime (rebuilt by the Phase 0 setup steps; see SETUP.md) ---
+.venv/
+.jdk/
+.hadoop/
+.spark-tmp/
+
+# --- Source data ---
+# flights.csv alone is 592 MB. Download from Kaggle into data/ instead;
+# data/dot_to_iata.csv IS tracked, because it is our derived output.
+data/flights.csv
+data/airports.csv
+data/airlines.csv
+
+# --- Derived data and run outputs ---
+data/parquet/
+mlruns/
+mlflow.db
+models/
+stream_input/
+stream_output/
+checkpoints/
+
+# --- Generated figures/tables (reproduced by benchmark_results.py) ---
+# Everything in here is derived from the MLflow store, including
+# results_table.md, which REPORT.md includes. Kept out of the repo so a
+# provisional table from a small validation run can never be mistaken for
+# the real tournament results.
+docs/benchmarks/*
+
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# --- Logs ---
+*.log
