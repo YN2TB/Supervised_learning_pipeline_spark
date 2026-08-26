@@ -1,0 +1,1022 @@
+<title>Flight Delay Project Handbook</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+
+<style>
+  :root {
+    color-scheme: light;
+    --surface:   #fbfcfd;
+    --raised:    #f1f5f9;
+    --sunken:    #e6edf4;
+    --ink:       #0f151c;
+    --ink-2:     #4b5763;
+    --ink-3:     #7b8794;
+    --line:      #d9e1ea;
+    --line-soft: #e9eff5;
+    --accent:    #1f6fd0;
+    --accent-ink:#17538f;
+    --accent-bg: #e6f0fb;
+    --warm:      #c2521f;
+    --warm-bg:   #fbeee7;
+    --good:      #14724f;
+    --good-bg:   #e4f4ed;
+    --warn:      #8d5c00;
+    --warn-bg:   #fbf1dd;
+    --code-bg:   #f1f5f9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface:   #0c1117;
+      --raised:    #141c25;
+      --sunken:    #1b242e;
+      --ink:       #eef3f8;
+      --ink-2:     #a6b3c1;
+      --ink-3:     #76828f;
+      --line:      #243039;
+      --line-soft: #1a232c;
+      --accent:    #6aabf2;
+      --accent-ink:#9ccbf9;
+      --accent-bg: #122437;
+      --warm:      #f0855c;
+      --warm-bg:   #2b1a13;
+      --good:      #4cbd8e;
+      --good-bg:   #10281f;
+      --warn:      #d8a33c;
+      --warn-bg:   #2a2113;
+      --code-bg:   #141c25;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface:   #0c1117;
+    --raised:    #141c25;
+    --sunken:    #1b242e;
+    --ink:       #eef3f8;
+    --ink-2:     #a6b3c1;
+    --ink-3:     #76828f;
+    --line:      #243039;
+    --line-soft: #1a232c;
+    --accent:    #6aabf2;
+    --accent-ink:#9ccbf9;
+    --accent-bg: #122437;
+    --warm:      #f0855c;
+    --warm-bg:   #2b1a13;
+    --good:      #4cbd8e;
+    --good-bg:   #10281f;
+    --warn:      #d8a33c;
+    --warn-bg:   #2a2113;
+    --code-bg:   #141c25;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--surface);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 16px; line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell { max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+  .layout { display: grid; grid-template-columns: 1fr; gap: 40px; }
+  @media (width >= 1000px) {
+    .layout { grid-template-columns: 216px minmax(0,1fr); gap: 56px; }
+  }
+
+  /* ---------- masthead ---------- */
+  .top {
+    background: linear-gradient(170deg, var(--raised) 0%, var(--surface) 100%);
+    border-bottom: 1px solid var(--line);
+    padding: 52px 0 38px;
+    margin-bottom: 44px;
+  }
+  .kicker {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px; letter-spacing: .15em; text-transform: uppercase;
+    color: var(--ink-3); margin: 0 0 16px;
+  }
+  h1 {
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: clamp(2rem, 5vw, 2.9rem); font-weight: 600;
+    line-height: 1.08; letter-spacing: -.02em; text-wrap: balance;
+    margin: 0 0 14px; max-width: 20ch;
+  }
+  .sub {
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 1.12rem; color: var(--ink-2); max-width: 60ch; margin: 0;
+  }
+
+  /* ---------- side nav ---------- */
+  nav.toc { font-size: .88rem; }
+  @media (width >= 1000px) {
+    nav.toc { position: sticky; top: 24px; align-self: start; max-height: calc(100vh - 48px); overflow-y: auto; }
+  }
+  nav.toc p {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-3); margin: 0 0 12px;
+  }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  nav.toc a {
+    display: block; padding: 5px 10px; border-radius: 5px;
+    color: var(--ink-2); text-decoration: none;
+    border-left: 2px solid transparent;
+  }
+  nav.toc a:hover { background: var(--raised); color: var(--ink); }
+  nav.toc a.on { color: var(--accent-ink); border-left-color: var(--accent); background: var(--accent-bg); font-weight: 500; }
+
+  /* ---------- content ---------- */
+  main { min-width: 0; padding-bottom: 100px; }
+  section { margin-bottom: 64px; scroll-margin-top: 20px; }
+  h2 {
+    font-family: "IBM Plex Serif", Georgia, serif;
+    font-size: 1.6rem; font-weight: 600; letter-spacing: -.012em;
+    margin: 0 0 4px; text-wrap: balance;
+  }
+  .h2num {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px; font-weight: 600; letter-spacing: .1em;
+    color: var(--accent); display: block; margin-bottom: 8px;
+  }
+  h3 { font-size: 1.05rem; font-weight: 600; margin: 30px 0 10px; }
+  .sec-intro { color: var(--ink-2); font-size: 1.03rem; margin: 10px 0 24px; max-width: 66ch; }
+  p { margin: 0 0 15px; max-width: 68ch; }
+  ul, ol.plain { padding-left: 1.2rem; margin: 0 0 16px; max-width: 68ch; }
+  li { margin-bottom: 7px; }
+  li::marker { color: var(--ink-3); }
+  strong { font-weight: 600; }
+  a { color: var(--accent-ink); text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible, summary:focus-visible, input:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px;
+  }
+  code {
+    font-family: "IBM Plex Mono", monospace; font-size: .855em;
+    background: var(--sunken); padding: .12em .38em; border-radius: 3px;
+  }
+
+  /* ---------- command block with copy ---------- */
+  .cmd { position: relative; margin: 16px 0; }
+  .cmd pre {
+    font-family: "IBM Plex Mono", monospace; font-size: .82rem; line-height: 1.75;
+    background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 7px; padding: 15px 60px 15px 16px; margin: 0;
+    overflow-x: auto; color: var(--ink);
+  }
+  .cmd pre .c { color: var(--ink-3); }
+  .copy {
+    position: absolute; top: 9px; right: 9px;
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; font-weight: 600;
+    letter-spacing: .06em; text-transform: uppercase;
+    background: var(--surface); color: var(--ink-2);
+    border: 1px solid var(--line); border-radius: 5px;
+    padding: 4px 9px; cursor: pointer;
+  }
+  .copy:hover { color: var(--ink); border-color: var(--ink-3); }
+  .copy.ok { color: var(--good); border-color: var(--good); }
+
+  /* ---------- shell tabs ---------- */
+  .tabs { display: inline-flex; gap: 2px; background: var(--sunken); padding: 3px; border-radius: 7px; margin: 4px 0 12px; }
+  .tabs button {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; font-weight: 600;
+    letter-spacing: .05em; border: 0; background: transparent; color: var(--ink-3);
+    padding: 6px 13px; border-radius: 5px; cursor: pointer;
+  }
+  .tabs button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  [data-shell] { display: none; }
+  [data-shell].show { display: block; }
+
+  /* ---------- checklist ---------- */
+  .progress-wrap {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--raised); border: 1px solid var(--line);
+    border-radius: 8px; padding: 13px 16px; margin-bottom: 22px;
+  }
+  .progress-bar { flex: 1; height: 7px; background: var(--sunken); border-radius: 100px; overflow: hidden; }
+  .progress-fill { height: 100%; width: 0%; background: var(--good); border-radius: 100px; transition: width .25s ease; }
+  .progress-txt {
+    font-family: "IBM Plex Mono", monospace; font-size: 12px; font-weight: 600;
+    font-variant-numeric: tabular-nums; color: var(--ink-2); white-space: nowrap;
+  }
+  .reset {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px;
+    background: none; border: 0; color: var(--ink-3); cursor: pointer;
+    text-decoration: underline; padding: 0;
+  }
+
+  .step {
+    border: 1px solid var(--line); border-radius: 9px;
+    padding: 16px 18px; margin-bottom: 12px; background: var(--surface);
+  }
+  .step.done { border-color: var(--good); background: var(--good-bg); }
+  .step-head { display: flex; align-items: flex-start; gap: 11px; }
+  .step-head input { margin: 5px 0 0; width: 17px; height: 17px; accent-color: var(--good); cursor: pointer; flex: none; }
+  .step-head label { font-weight: 600; cursor: pointer; flex: 1; }
+  .step-num {
+    font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-3);
+    margin-right: 8px; font-weight: 600;
+  }
+  .step-body { padding-left: 28px; }
+  .step-body p { margin: 8px 0; font-size: .94rem; }
+  .step .expect {
+    font-family: "IBM Plex Mono", monospace; font-size: .78rem;
+    color: var(--good); background: var(--good-bg);
+    border: 1px dashed var(--good); border-radius: 5px;
+    padding: 7px 11px; margin-top: 10px; display: block;
+  }
+  :root[data-theme="dark"] .step.done .expect,
+  .step.done .expect { background: transparent; }
+
+  /* ---------- callouts ---------- */
+  .box { border-left: 3px solid var(--accent); background: var(--accent-bg); padding: 14px 17px; border-radius: 0 6px 6px 0; margin: 20px 0; font-size: .95rem; }
+  .box.warn { border-left-color: var(--warn); background: var(--warn-bg); }
+  .box.stop { border-left-color: var(--warm); background: var(--warm-bg); }
+  .box p:last-child { margin-bottom: 0; }
+  .box .lbl {
+    display: block; font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--ink-2); margin-bottom: 6px;
+  }
+
+  /* ---------- pipeline flow ---------- */
+  .flow { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin: 22px 0; }
+  .flow-step {
+    flex: 1 1 130px; background: var(--raised); border: 1px solid var(--line);
+    border-radius: 8px; padding: 12px 13px; position: relative;
+  }
+  .flow-step b { display: block; font-size: .84rem; margin-bottom: 3px; }
+  .flow-step span { font-size: .78rem; color: var(--ink-2); line-height: 1.45; display: block; }
+  .flow-step em {
+    font-family: "IBM Plex Mono", monospace; font-style: normal;
+    font-size: 9.5px; letter-spacing: .09em; text-transform: uppercase;
+    color: var(--accent); display: block; margin-bottom: 6px;
+  }
+
+  /* ---------- tables ---------- */
+  .scroll { overflow-x: auto; margin: 18px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: .89rem; min-width: 32rem; }
+  th, td { text-align: left; padding: 9px 14px 9px 0; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  th {
+    font-family: "IBM Plex Mono", monospace; font-size: 10.5px; font-weight: 600;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--ink-3);
+    border-bottom-color: var(--line);
+  }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* ---------- glossary / troubleshooting ---------- */
+  details {
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 0; margin-bottom: 8px; background: var(--surface); overflow: hidden;
+  }
+  details[open] { background: var(--raised); }
+  summary {
+    cursor: pointer; padding: 12px 16px; font-weight: 500; font-size: .95rem;
+    list-style: none; display: flex; align-items: center; gap: 10px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before {
+    content: "+"; font-family: "IBM Plex Mono", monospace; color: var(--accent);
+    font-weight: 600; flex: none; width: 12px;
+  }
+  details[open] summary::before { content: "\2212"; }
+  .det-body { padding: 0 16px 14px 38px; font-size: .93rem; color: var(--ink-2); }
+  .det-body p { margin: 0 0 10px; }
+  .det-body p:last-child { margin-bottom: 0; }
+  .det-body code { font-size: .84em; }
+
+  .filter {
+    width: 100%; max-width: 30rem; font-family: inherit; font-size: .93rem;
+    padding: 10px 13px; border: 1px solid var(--line); border-radius: 7px;
+    background: var(--surface); color: var(--ink); margin-bottom: 16px;
+  }
+  .filter::placeholder { color: var(--ink-3); }
+  .no-hits { color: var(--ink-3); font-size: .9rem; display: none; }
+  .no-hits.show { display: block; }
+
+  /* ---------- task cards ---------- */
+  .tasks { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(250px,1fr)); }
+  .task { border: 1px solid var(--line); border-radius: 9px; padding: 15px 17px; background: var(--surface); }
+  .task h4 { margin: 0 0 6px; font-size: .96rem; }
+  .task p { font-size: .88rem; color: var(--ink-2); margin: 0 0 10px; max-width: none; }
+  .chip {
+    display: inline-block; font-family: "IBM Plex Mono", monospace;
+    font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 100px; border: 1px solid currentColor;
+  }
+  .chip.easy { color: var(--good); }
+  .chip.med  { color: var(--warn); }
+  .chip.hard { color: var(--warm); }
+
+  footer { border-top: 1px solid var(--line); padding-top: 22px; color: var(--ink-3); font-size: .87rem; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="top">
+  <div class="shell">
+    <p class="kicker">Team handbook · PySpark MLlib coursework</p>
+    <h1>Predicting how late a flight will land</h1>
+    <p class="sub">
+      Everything you need to join this project: what we are building, how to get it
+      running on your machine in about 30 minutes, and what to pick up next. No prior
+      Spark experience assumed.
+    </p>
+  </div>
+</div>
+
+<div class="shell layout">
+
+  <nav class="toc" aria-label="Contents">
+    <p>Contents</p>
+    <ol>
+      <li><a href="#what">1 · What we're building</a></li>
+      <li><a href="#words">2 · Words you'll see</a></li>
+      <li><a href="#setup">3 · Set up your machine</a></li>
+      <li><a href="#repo">4 · What's in the repo</a></li>
+      <li><a href="#how">5 · How the pipeline works</a></li>
+      <li><a href="#rules">6 · Rules: don't undo these</a></li>
+      <li><a href="#todo">7 · What still needs doing</a></li>
+      <li><a href="#broken">8 · When it breaks</a></li>
+      <li><a href="#conventions">9 · How we work</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- ============ 1 ============ -->
+    <section id="what">
+      <span class="h2num">SECTION 1</span>
+      <h2>What we're building</h2>
+      <p class="sec-intro">
+        A system that looks at a flight which has just taken off and predicts how many
+        minutes late it will arrive.
+      </p>
+
+      <p>
+        We have <strong>5.8 million real flights</strong> from every US domestic route in
+        2015 — who flew them, from where, to where, when they were scheduled, and when
+        they actually left and landed. That is far too much data for Excel or ordinary
+        Python, so we use <strong>Apache Spark</strong>, which splits the work across all
+        the cores on a machine (and, in industry, across many machines).
+      </p>
+
+      <p>We answer two questions about each flight:</p>
+      <ul>
+        <li><strong>How late will it be?</strong> A number in minutes — a <em>regression</em> problem.</li>
+        <li><strong>Will it be badly late?</strong> More than 30 minutes, yes or no — a <em>classification</em> problem.</li>
+      </ul>
+
+      <p>
+        This is coursework marked out of 100: <strong>35 marks</strong> for a written
+        report explaining the mathematics, and <strong>65 marks</strong> for working code
+        that meets a specific brief — custom Spark components, dimensionality reduction,
+        five competing algorithms, experiment tracking, and live scoring of streaming
+        data.
+      </p>
+
+      <div class="box">
+        <span class="lbl">Where the project stands today</span>
+        <p>
+          The environment, the data preparation and the custom components are finished
+          and tested. The full model-training run is written and proven on small samples
+          but has not yet been run at full scale — that is the biggest remaining job. The
+          report's theory is complete; its results section is waiting on that run.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ 2 ============ -->
+    <section id="words">
+      <span class="h2num">SECTION 2</span>
+      <h2>Words you'll see</h2>
+      <p class="sec-intro">
+        Open any of these when you hit the term. Nothing here assumes you've used Spark.
+      </p>
+
+      <details><summary>Spark / PySpark</summary><div class="det-body">
+        <p><strong>Spark</strong> is a tool for processing data too big for one program to hold in memory. It breaks a table into chunks, works on them in parallel, and combines the results. <strong>PySpark</strong> is how you drive Spark from Python.</p>
+        <p>One important habit: Spark is <em>lazy</em>. When you write a transformation nothing happens; it only runs when you ask for a result (a count, a save). This is why a line that "looks instant" can suddenly take a minute.</p>
+      </div></details>
+
+      <details><summary>DataFrame</summary><div class="det-body">
+        <p>A table with named columns, like a spreadsheet or a SQL table — except it may be spread across many chunks and many CPU cores. Everything in this project is a DataFrame.</p>
+      </div></details>
+
+      <details><summary>Pipeline, Transformer, Estimator</summary><div class="det-body">
+        <p>A <strong>Pipeline</strong> is an ordered list of data-preparation steps ending in a model, so the exact same preparation is applied during training and later during prediction. This matters enormously — most real bugs come from preparing training and live data differently.</p>
+        <p>A <strong>Transformer</strong> just changes data (e.g. "multiply this column by 2"). An <strong>Estimator</strong> first <em>learns</em> something from the training data and then produces a Transformer that applies what it learned (e.g. "work out the average, then subtract it"). The difference is central to Section 6.</p>
+      </div></details>
+
+      <details><summary>Training split / test split</summary><div class="det-body">
+        <p>We hide 20% of the flights from the model while it learns, then measure it on those unseen flights. Otherwise we would only be proving it can memorise, not predict.</p>
+      </div></details>
+
+      <details><summary>Data leakage</summary><div class="det-body">
+        <p>When the model accidentally gets information it would not have in real life. It then scores brilliantly in testing and fails completely in production.</p>
+        <p>Our dataset contains a perfect trap for this — see Section 6, rule 1. It is the single most important idea in the project.</p>
+      </div></details>
+
+      <details><summary>Cross-validation</summary><div class="det-body">
+        <p>Instead of testing once, split the training data into 5 parts, train on 4 and test on the 5th, and rotate. You get a more trustworthy score and can compare model settings fairly. It costs 5× the compute, which is why our training run takes hours.</p>
+      </div></details>
+
+      <details><summary>R², RMSE, AUC</summary><div class="det-body">
+        <p><strong>R²</strong> — how much of the variation the model explains. 1.0 is perfect, 0 is no better than always guessing the average. Ours is about <strong>0.93</strong>.</p>
+        <p><strong>RMSE</strong> — typical error in the model's own units. Ours is about <strong>10.5 minutes</strong>.</p>
+        <p><strong>AUC</strong> — for yes/no questions, the chance the model ranks a genuinely late flight above an on-time one. 0.5 is a coin flip; ours is about <strong>0.95</strong>.</p>
+      </div></details>
+
+      <details><summary>PCA (dimensionality reduction)</summary><div class="det-body">
+        <p>A method for squeezing many columns into a few that carry most of the information. The brief requires it. On our data it works poorly — it keeps only 28% of the information — so we train every model twice, with and without it, and report the difference honestly. That comparison is worth marks.</p>
+      </div></details>
+
+      <details><summary>MLflow</summary><div class="det-body">
+        <p>A record-keeper for experiments. Every training run logs its settings, its scores and the trained model itself, so results are reproducible and comparable instead of scribbled in a notebook. It also stores the winning model in a "registry" and marks it as the production version.</p>
+      </div></details>
+
+      <details><summary>Streaming</summary><div class="det-body">
+        <p>Scoring flights as they arrive rather than in one big batch. We demonstrate it by dropping small files into a watched folder; the job picks them up and predicts within seconds, using the exact model saved during training.</p>
+      </div></details>
+    </section>
+
+    <!-- ============ 3 ============ -->
+    <section id="setup">
+      <span class="h2num">SECTION 3</span>
+      <h2>Set up your machine</h2>
+      <p class="sec-intro">
+        About 30 minutes, most of it downloading. Tick each step as you go — your progress
+        is saved in this browser.
+      </p>
+
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="pfill"></div></div>
+        <span class="progress-txt" id="ptxt">0 / 7</span>
+        <button class="reset" id="preset" type="button">reset</button>
+      </div>
+
+      <div class="box stop">
+        <span class="lbl">Read this before you start</span>
+        <p>
+          Spark is fussy about versions. The setup below installs a specific Python and a
+          specific Java <em>inside the project folder</em> and does not touch anything else
+          on your computer. Please don't substitute the versions you already have — Section
+          8 explains exactly what breaks, and the failures are extremely misleading.
+        </p>
+      </div>
+
+      <div class="tabs" role="group" aria-label="Choose your shell">
+        <button type="button" data-pick="bash" aria-pressed="true">Git Bash</button>
+        <button type="button" data-pick="ps" aria-pressed="false">PowerShell</button>
+      </div>
+
+      <div class="step" data-step="1">
+        <div class="step-head">
+          <input type="checkbox" id="s1"><label for="s1"><span class="step-num">01</span>Install the prerequisites</label>
+        </div>
+        <div class="step-body">
+          <p>You need <strong>Git</strong> and <strong>uv</strong> (a fast Python version manager). Everything else is handled for you.</p>
+          <div data-shell="bash" class="show">
+            <div class="cmd"><pre><span class="c"># install uv (once, per machine)</span>
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"</pre><button class="copy" type="button">Copy</button></div>
+          </div>
+          <div data-shell="ps">
+            <div class="cmd"><pre><span class="c"># install uv (once, per machine)</span>
+irm https://astral.sh/uv/install.ps1 | iex</pre><button class="copy" type="button">Copy</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step" data-step="2">
+        <div class="step-head">
+          <input type="checkbox" id="s2"><label for="s2"><span class="step-num">02</span>Clone the repository</label>
+        </div>
+        <div class="step-body">
+          <p>The code lives on the <code>test</code> branch. <code>main</code> deliberately holds only the README.</p>
+          <div class="cmd"><pre>git clone https://github.com/YN2TB/Supervised_learning_pipeline_spark.git
+cd Supervised_learning_pipeline_spark
+git checkout test</pre><button class="copy" type="button">Copy</button></div>
+        </div>
+      </div>
+
+      <div class="step" data-step="3">
+        <div class="step-head">
+          <input type="checkbox" id="s3"><label for="s3"><span class="step-num">03</span>Download the flight data</label>
+        </div>
+        <div class="step-body">
+          <p>
+            The raw data is <strong>592 MB</strong>, far too big for Git, so it is not in the
+            repository. Get it from Kaggle —
+            <a href="https://www.kaggle.com/datasets/usdot/flight-delays" target="_blank" rel="noopener">US Flight Delays and Performance Data</a>
+            — and put all three files in a <code>data/</code> folder.
+          </p>
+          <div class="cmd"><pre>data/flights.csv     <span class="c"># 592 MB, 5.8M rows</span>
+data/airports.csv    <span class="c"># 322 airports</span>
+data/airlines.csv    <span class="c"># 14 carriers</span></pre><button class="copy" type="button">Copy</button></div>
+          <p>You'll need a free Kaggle account to download.</p>
+        </div>
+      </div>
+
+      <div class="step" data-step="4">
+        <div class="step-head">
+          <input type="checkbox" id="s4"><label for="s4"><span class="step-num">04</span>Create the Python environment</label>
+        </div>
+        <div class="step-body">
+          <p>Python <strong>3.11</strong> specifically. Not 3.12, not 3.13 — Section 8 explains why.</p>
+          <div data-shell="bash" class="show">
+            <div class="cmd"><pre>uv python install 3.11
+"$(uv python find 3.11)" -m venv .venv
+./.venv/Scripts/python.exe -m pip install -U pip setuptools
+./.venv/Scripts/python.exe -m pip install -r requirements.txt</pre><button class="copy" type="button">Copy</button></div>
+          </div>
+          <div data-shell="ps">
+            <div class="cmd"><pre>uv python install 3.11
+&amp; (uv python find 3.11) -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -U pip setuptools
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt</pre><button class="copy" type="button">Copy</button></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step" data-step="5">
+        <div class="step-head">
+          <input type="checkbox" id="s5"><label for="s5"><span class="step-num">05</span>Get Java 17 and the Hadoop files</label>
+        </div>
+        <div class="step-body">
+          <p>
+            Spark runs on Java. Download the <strong>Temurin JDK 17</strong> zip and unpack it
+            into <code>.jdk/</code> in the project folder. You also need two small Windows
+            support files, <code>hadoop.dll</code> and <code>winutils.exe</code> (Hadoop
+            3.3.5), placed in <code>.hadoop/bin/</code>.
+          </p>
+          <p>Ask whoever set the project up — they can send you both, and it takes a minute.</p>
+          <div class="cmd"><pre>.jdk/jdk-17.x.x/       <span class="c"># unpacked Temurin JDK 17</span>
+.hadoop/bin/hadoop.dll
+.hadoop/bin/winutils.exe</pre><button class="copy" type="button">Copy</button></div>
+        </div>
+      </div>
+
+      <div class="step" data-step="6">
+        <div class="step-head">
+          <input type="checkbox" id="s6"><label for="s6"><span class="step-num">06</span>Load the environment, then check it</label>
+        </div>
+        <div class="step-body">
+          <p>
+            <strong>You must run this at the start of every session.</strong> It points Spark
+            at the right Java and the right Python. Nothing works without it, and the errors
+            you get are confusing rather than obvious.
+          </p>
+          <div data-shell="bash" class="show">
+            <div class="cmd"><pre>source ./env.sh
+python scripts/smoke_test.py</pre><button class="copy" type="button">Copy</button></div>
+          </div>
+          <div data-shell="ps">
+            <div class="cmd"><pre>. .\env.ps1
+python scripts\smoke_test.py</pre><button class="copy" type="button">Copy</button></div>
+          </div>
+          <span class="expect">Expected: ALL CHECKS PASSED (5/5)</span>
+          <p>This starts Spark, runs a calculation, and saves and reloads a model — proving Java, Python and the Hadoop files all work together.</p>
+        </div>
+      </div>
+
+      <div class="step" data-step="7">
+        <div class="step-head">
+          <input type="checkbox" id="s7"><label for="s7"><span class="step-num">07</span>Build the dataset</label>
+        </div>
+        <div class="step-body">
+          <p>Converts the CSV into a fast columnar format, repairs a known data fault, joins in airport locations, and applies our safety rules. Takes a few minutes.</p>
+          <div class="cmd"><pre>python data_prep.py --step raw
+python scripts/build_airport_code_map.py
+python data_prep.py --step curate
+python scripts/test_transformers.py</pre><button class="copy" type="button">Copy</button></div>
+          <span class="expect">Expected: 5,704,000 curated rows, then ALL CHECKS PASSED (8/8)</span>
+        </div>
+      </div>
+
+      <div class="box">
+        <span class="lbl">You're set up</span>
+        <p>
+          Both gates green means your machine matches everyone else's. If either fails, jump
+          to Section 8 — every failure we have actually hit is listed there with its fix.
+        </p>
+      </div>
+    </section>
+
+    <!-- ============ 4 ============ -->
+    <section id="repo">
+      <span class="h2num">SECTION 4</span>
+      <h2>What's in the repo</h2>
+      <p class="sec-intro">Nine files do the real work. Here's what each is for.</p>
+
+      <div class="scroll">
+        <table>
+          <thead><tr><th>File</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>env.sh</code> / <code>env.ps1</code></td><td>Points Spark at the right Java and Python. Run first, every session.</td></tr>
+            <tr><td><code>data_prep.py</code></td><td>Turns the raw CSV into the clean table everything else reads.</td></tr>
+            <tr><td><code>flight_schema.py</code></td><td>Column definitions, and the list of columns the model is forbidden to see.</td></tr>
+            <tr><td><code>custom_transformers.py</code></td><td>Our hand-written Spark components — the part the brief cares most about.</td></tr>
+            <tr><td><code>mllib_pipeline.py</code></td><td>The main event: builds the pipeline, trains five algorithms, records everything.</td></tr>
+            <tr><td><code>inference.py</code></td><td>Loads the saved model and scores flights arriving live.</td></tr>
+            <tr><td><code>benchmark_results.py</code></td><td>Reads the experiment records and draws the charts and results table.</td></tr>
+            <tr><td><code>submit_pipeline.sh</code></td><td>Production-style launcher via <code>spark-submit</code>.</td></tr>
+            <tr><td><code>docs/REPORT.md</code></td><td>The written report — 35 of the 100 marks.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        <code>scripts/</code> holds the two test gates plus helper tools. Anything under
+        <code>docs/benchmarks/</code> is generated, so never edit it by hand.
+      </p>
+    </section>
+
+    <!-- ============ 5 ============ -->
+    <section id="how">
+      <span class="h2num">SECTION 5</span>
+      <h2>How the pipeline works</h2>
+      <p class="sec-intro">
+        Raw flights go in one end; a delay prediction comes out the other. Every step runs
+        in the same order during training and during live scoring — that's the whole point
+        of a pipeline.
+      </p>
+
+      <div class="flow">
+        <div class="flow-step"><em>Step 1</em><b>Clean up</b><span>Trim absurd values learned from training data only.</span></div>
+        <div class="flow-step"><em>Step 2</em><b>Add features</b><span>Distance between airports, how tight the schedule is.</span></div>
+        <div class="flow-step"><em>Step 3</em><b>Encode</b><span>Turn airlines and airports into numbers a model can use.</span></div>
+        <div class="flow-step"><em>Step 4</em><b>Combine &amp; scale</b><span>Merge into one vector, put every column on a comparable scale.</span></div>
+        <div class="flow-step"><em>Step 5</em><b>Predict</b><span>One of five algorithms produces the delay estimate.</span></div>
+      </div>
+
+      <h3>The five algorithms we compare</h3>
+      <p>
+        The brief names all five, and they are trained on identical data so the comparison
+        is fair: <strong>Linear Regression</strong>, a <strong>Generalised Linear Model</strong>,
+        <strong>Linear SVC</strong>, <strong>Random Forest</strong> and
+        <strong>Gradient-Boosted Trees</strong>. The first three draw straight-line
+        relationships; the last two build many decision trees and combine them.
+      </p>
+      <p>
+        Each is trained twice — once with PCA and once without — giving 14 runs in total.
+        That's why the full training run takes hours.
+      </p>
+
+      <h3>What the numbers mean</h3>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Measure</th><th class="num">Ours</th><th>In plain terms</th></tr></thead>
+          <tbody>
+            <tr><td>R²</td><td class="num">0.930</td><td>Explains 93% of the variation in lateness.</td></tr>
+            <tr><td>RMSE</td><td class="num">10.5 min</td><td>Typical miss is about ten minutes.</td></tr>
+            <tr><td>AUC</td><td class="num">0.951</td><td>Ranks a late flight above an on-time one 95% of the time.</td></tr>
+            <tr><td>PCA variance kept</td><td class="num">28.1%</td><td>Squeezing the columns loses most of the information — so we report both.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 6 ============ -->
+    <section id="rules">
+      <span class="h2num">SECTION 6</span>
+      <h2>Rules: don't undo these</h2>
+      <p class="sec-intro">
+        Each of these looks like a mistake if you don't know the reason. All of them were
+        arrived at by measurement, and reverting any one measurably breaks the project.
+      </p>
+
+      <div class="box stop">
+        <span class="lbl">Rule 1 — the model must never see the future</span>
+        <p>
+          The dataset contains five columns that break down <em>why</em> a flight was late.
+          Add them up and you get the answer exactly. A model given them scores about 0.99
+          and is completely worthless, because at take-off those columns don't exist yet.
+        </p>
+        <p>
+          They are deleted in code, with a check that fails loudly if one sneaks back.
+          <strong>If you ever see a score near 0.99, something has gone wrong — don't celebrate it.</strong>
+        </p>
+      </div>
+
+      <div class="box warn">
+        <span class="lbl">Rule 2 — leave departure delay alone</span>
+        <p>
+          How late a plane <em>left</em> is by far the best clue to how late it will
+          <em>arrive</em>. Two reasonable-looking "tidy-ups" were tried on that column and
+          both destroyed it: capping extreme values threw away the 12.8% of flights that
+          matter most, and rescaling it broke the straight-line relationship the model
+          relies on.
+        </p>
+        <p>
+          Passed through untouched: R² <strong>0.937</strong>. Capped: <strong>0.390</strong>.
+          Rescaled: <strong>0.409</strong>. It stays raw.
+        </p>
+      </div>
+
+      <div class="box">
+        <span class="lbl">Rule 3 — learn from training data only</span>
+        <p>
+          Our custom components learn their settings (cut-off values, category averages)
+          during training and then freeze them. Writing them the simpler way — recalculating
+          each time they run — would quietly let test data influence the result, and would
+          behave differently on every batch of live data.
+        </p>
+      </div>
+
+      <div class="box">
+        <span class="lbl">Rule 4 — keep both PCA and non-PCA versions</span>
+        <p>
+          PCA is required by the brief but performs poorly here. Training both ways lets us
+          satisfy the requirement <em>and</em> show what it costs — and only the non-PCA
+          version can tell us which features actually mattered.
+        </p>
+      </div>
+
+      <p>
+        The full reasoning, with the mathematics, is in <code>docs/REPORT.md</code>. Please
+        read the relevant part before changing any of the above.
+      </p>
+    </section>
+
+    <!-- ============ 7 ============ -->
+    <section id="todo">
+      <span class="h2num">SECTION 7</span>
+      <h2>What still needs doing</h2>
+      <p class="sec-intro">Roughly in priority order. Claim one in the group chat so we don't duplicate work.</p>
+
+      <div class="tasks">
+        <div class="task">
+          <h4>Run the full training</h4>
+          <p>The big one, and everything else waits on it. Needs a machine that can be left alone for a few hours.</p>
+          <span class="chip med">Needs a strong PC</span>
+        </div>
+        <div class="task">
+          <h4>Fill in the report's results</h4>
+          <p>Once training finishes, paste the generated table into <code>docs/REPORT.md</code> and write up what the numbers show.</p>
+          <span class="chip easy">Good first task</span>
+        </div>
+        <div class="task">
+          <h4>Demonstrate live scoring</h4>
+          <p>Run the streaming job and the event generator together, and screenshot predictions appearing. Worth marks.</p>
+          <span class="chip easy">Good first task</span>
+        </div>
+        <div class="task">
+          <h4>Build the presentation</h4>
+          <p>Part A is presented, not just written. Needs the theory turned into slides once results exist.</p>
+          <span class="chip med">Design-friendly</span>
+        </div>
+        <div class="task">
+          <h4>Proofread the maths</h4>
+          <p>Check the derivations in <code>docs/REPORT.md</code> against the brief — every formula it asks for should be there.</p>
+          <span class="chip hard">Needs the theory</span>
+        </div>
+      </div>
+
+      <h3>The command for the big run</h3>
+      <div class="cmd"><pre>source ./env.sh
+python mllib_pipeline.py --tune-fraction 0.02 --folds 5
+python benchmark_results.py</pre><button class="copy" type="button">Copy</button></div>
+      <p>
+        Leave it running. Want to check the code works before committing hours? Run a
+        miniature version first — it finishes in minutes and exercises the same path:
+      </p>
+      <div class="cmd"><pre>python mllib_pipeline.py --sample-fraction 0.01 --folds 2 --models linear_regression</pre><button class="copy" type="button">Copy</button></div>
+    </section>
+
+    <!-- ============ 8 ============ -->
+    <section id="broken">
+      <span class="h2num">SECTION 8</span>
+      <h2>When it breaks</h2>
+      <p class="sec-intro">
+        Every failure below is one we actually hit. Type an error message to filter.
+      </p>
+
+      <input class="filter" id="tsfilter" type="search" placeholder="Search the error you're seeing…" aria-label="Filter troubleshooting">
+      <div id="tslist">
+        <details data-t><summary>Everything fails the moment I run anything</summary><div class="det-body">
+          <p>You almost certainly forgot to load the environment. Run <code>source ./env.sh</code> (or <code>. .\env.ps1</code>) in <em>this</em> terminal — it doesn't carry over between windows.</p>
+        </div></details>
+
+        <details data-t><summary>"Python worker exited unexpectedly" / EOFException</summary><div class="det-body">
+          <p>You're on Python 3.12. Spark 3.5 launches its helper process, the process exits silently, and every task dies. Confusingly, some Spark features keep working, so it looks like a different problem entirely.</p>
+          <p>Fix: rebuild the environment on <strong>Python 3.11</strong> (step 04). This is not optional.</p>
+        </div></details>
+
+        <details data-t><summary>ModuleNotFoundError: typing.io</summary><div class="det-body">
+          <p>You're running the system Python (3.13 or newer) instead of the project one. Load the environment first; it selects the correct interpreter.</p>
+        </div></details>
+
+        <details data-t><summary>Java errors, or Spark won't start at all</summary><div class="det-body">
+          <p><code>JAVA_HOME</code> is pointing at a Java version Spark doesn't support. The environment file points it at the project's own Java 17 — make sure you unpacked the JDK into <code>.jdk/</code> as in step 05.</p>
+        </div></details>
+
+        <details data-t><summary>NativeIO$Windows.access0 when saving a model</summary><div class="det-body">
+          <p><code>hadoop.dll</code> is missing from <code>.hadoop/bin/</code>. Windows needs it for Spark to write files. Note that <code>winutils.exe</code> alone is not enough, and the version must match the one Spark ships with (3.3.5) rather than any Hadoop you have installed.</p>
+        </div></details>
+
+        <details data-t><summary>NotConvergedException during PCA</summary><div class="det-body">
+          <p>Happens on very small samples: a category is missing from a fold, its column becomes constant, and the maths breaks down. The pipeline already guards against this. If you see it, you've probably reordered or removed a pipeline stage — put it back.</p>
+        </div></details>
+
+        <details data-t><summary>Training seems frozen with no output</summary><div class="det-body">
+          <p>Probably fine. Spark prints progress bars that don't flush cleanly, and long runs write to a log file instead. Check the log directly rather than watching the terminal, and give any full run a couple of hours before worrying.</p>
+        </div></details>
+
+        <details data-t><summary>My scores look amazing (R² near 0.99)</summary><div class="det-body">
+          <p>That's a bug, not a breakthrough. A forbidden column has got back into the features — see Section 6, rule 1. Expect roughly <strong>0.85 to 0.93</strong>.</p>
+        </div></details>
+
+        <details data-t><summary>My scores look terrible (R² near 0.48)</summary><div class="det-body">
+          <p>Something is transforming the departure delay column again. See Section 6, rule 2.</p>
+        </div></details>
+
+        <details data-t><summary>Nothing happens in the streaming demo</summary><div class="det-body">
+          <p>Start the scoring job <em>first</em>, then generate events in a second terminal — it only reacts to files that arrive after it starts watching. Both terminals need the environment loaded.</p>
+        </div></details>
+      </div>
+      <p class="no-hits" id="nohits">No match. Ask in the group chat and we'll add it here.</p>
+    </section>
+
+    <!-- ============ 9 ============ -->
+    <section id="conventions">
+      <span class="h2num">SECTION 9</span>
+      <h2>How we work</h2>
+
+      <h3>Branches</h3>
+      <p>
+        All work goes on <code>test</code>. <code>main</code> deliberately holds only the
+        README and the ignore file. <strong>Please don't push without saying so</strong> —
+        history has been rewritten once already and a surprise push can undo it.
+      </p>
+
+      <h3>Before you commit</h3>
+      <p>Run both gates. If either fails, something upstream broke.</p>
+      <div class="cmd"><pre>python scripts/smoke_test.py         <span class="c"># expect 5/5</span>
+python scripts/test_transformers.py  <span class="c"># expect 8/8</span></pre><button class="copy" type="button">Copy</button></div>
+
+      <h3>Two habits that saved us real time</h3>
+      <ul>
+        <li>
+          <strong>Measure before you "fix" a score.</strong> Two sensible-looking
+          improvements to the same column both made things worse. A five-minute comparison
+          settled it where argument couldn't.
+        </li>
+        <li>
+          <strong>Open the charts you generate.</strong> A chart can save successfully and
+          still be unreadable — one had its legend sitting on top of the numbers, invisible
+          until someone actually looked at the image.
+        </li>
+      </ul>
+
+      <h3>Where to read more</h3>
+      <ul>
+        <li><code>README.md</code> — short technical summary.</li>
+        <li><code>SETUP.md</code> — why each version is pinned.</li>
+        <li><code>docs/REPORT.md</code> — the full mathematics and analysis.</li>
+      </ul>
+
+      <footer>
+        <p>
+          Something here wrong, unclear, or missing? Say so and we'll fix it — this
+          handbook is meant to be the first thing a new person reads, so gaps in it cost
+          everyone time.
+        </p>
+      </footer>
+    </section>
+
+  </main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- copy buttons ---------- */
+  document.querySelectorAll(".copy").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var pre = btn.parentElement.querySelector("pre");
+      if (!pre) return;
+      // Strip the comment spans' text? No - keep exactly what is shown.
+      var text = pre.innerText.replace(/ /g, " ");
+      var done = function () {
+        btn.textContent = "Copied";
+        btn.classList.add("ok");
+        setTimeout(function () { btn.textContent = "Copy"; btn.classList.remove("ok"); }, 1600);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done, fallback);
+      } else { fallback(); }
+      function fallback() {
+        try {
+          var ta = document.createElement("textarea");
+          ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+          document.body.appendChild(ta); ta.select();
+          document.execCommand("copy"); document.body.removeChild(ta); done();
+        } catch (e) { btn.textContent = "Select it"; }
+      }
+    });
+  });
+
+  /* ---------- shell switcher ---------- */
+  var shellBtns = document.querySelectorAll("[data-pick]");
+  function setShell(kind) {
+    shellBtns.forEach(function (b) {
+      b.setAttribute("aria-pressed", String(b.dataset.pick === kind));
+    });
+    document.querySelectorAll("[data-shell]").forEach(function (el) {
+      el.classList.toggle("show", el.dataset.shell === kind);
+    });
+    try { localStorage.setItem("fd.shell", kind); } catch (e) {}
+  }
+  shellBtns.forEach(function (b) {
+    b.addEventListener("click", function () { setShell(b.dataset.pick); });
+  });
+  try {
+    var savedShell = localStorage.getItem("fd.shell");
+    if (savedShell) setShell(savedShell);
+  } catch (e) {}
+
+  /* ---------- setup checklist ---------- */
+  var boxes = Array.prototype.slice.call(
+    document.querySelectorAll('.step input[type="checkbox"]'));
+  var fill = document.getElementById("pfill");
+  var txt  = document.getElementById("ptxt");
+
+  function paint() {
+    var n = 0;
+    boxes.forEach(function (b) {
+      var card = b.closest(".step");
+      if (card) card.classList.toggle("done", b.checked);
+      if (b.checked) n++;
+    });
+    var pct = boxes.length ? (n / boxes.length) * 100 : 0;
+    if (fill) fill.style.width = pct + "%";
+    if (txt) txt.textContent = n + " / " + boxes.length;
+  }
+  function save() {
+    try {
+      localStorage.setItem("fd.setup",
+        JSON.stringify(boxes.filter(function (b) { return b.checked; })
+                            .map(function (b) { return b.id; })));
+    } catch (e) {}
+  }
+  try {
+    var raw = localStorage.getItem("fd.setup");
+    if (raw) {
+      var ids = JSON.parse(raw) || [];
+      boxes.forEach(function (b) { if (ids.indexOf(b.id) !== -1) b.checked = true; });
+    }
+  } catch (e) {}
+  boxes.forEach(function (b) {
+    b.addEventListener("change", function () { paint(); save(); });
+  });
+  var resetBtn = document.getElementById("preset");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", function () {
+      boxes.forEach(function (b) { b.checked = false; });
+      paint(); save();
+    });
+  }
+  paint();
+
+  /* ---------- troubleshooting filter ---------- */
+  var filter = document.getElementById("tsfilter");
+  var nohits = document.getElementById("nohits");
+  if (filter) {
+    filter.addEventListener("input", function () {
+      var q = filter.value.trim().toLowerCase();
+      var hits = 0;
+      document.querySelectorAll("#tslist [data-t]").forEach(function (d) {
+        var match = !q || d.textContent.toLowerCase().indexOf(q) !== -1;
+        d.style.display = match ? "" : "none";
+        if (match) hits++;
+        if (q && match) d.setAttribute("open", "");
+        else if (q) d.removeAttribute("open");
+      });
+      if (nohits) nohits.classList.toggle("show", hits === 0);
+    });
+  }
+
+  /* ---------- active section in the contents ---------- */
+  var links = Array.prototype.slice.call(document.querySelectorAll("nav.toc a"));
+  var targets = links.map(function (a) {
+    return document.querySelector(a.getAttribute("href"));
+  }).filter(Boolean);
+
+  if ("IntersectionObserver" in window && targets.length) {
+    var seen = new Map();
+    var obs = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) { seen.set(en.target.id, en.isIntersecting); });
+      var activeId = null;
+      for (var i = 0; i < targets.length; i++) {
+        if (seen.get(targets[i].id)) { activeId = targets[i].id; break; }
+      }
+      links.forEach(function (a) {
+        a.classList.toggle("on", a.getAttribute("href") === "#" + activeId);
+      });
+    }, { rootMargin: "-10% 0px -70% 0px", threshold: 0 });
+    targets.forEach(function (t) { obs.observe(t); });
+  }
+})();
+</script>
