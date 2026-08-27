@@ -1,0 +1,26 @@
+{
+  "tracking_uri": "sqlite:///D:/Downloads/deep_learning/Supervised_learning_pipeline_spark/mlflow.db",
+  "experiment": "flight-delay-mllib",
+  "evidence_source": "full_tournament_artifacts",
+  "runs": {
+    "winning_regression_model": "e179133008804c76ab26a0ec4eb74bc8",
+    "tree_feature_importance": "78859abbf3354387ac1b63581314e0c3",
+    "pca_explained_variance": "77301ac0cad349769fb579dd37e7bb3f"
+  },
+  "registered_model": {
+    "name": "flight_delay_pipeline",
+    "version": "1",
+    "aliases": ["Staging", "Production"],
+    "deployment_stage_tag": "Production",
+    "promotion_tags": {"promotion_stage_1": "Staging", "promotion_stage_2": "Production"},
+    "registry_load_verified": true,
+    "loaded_pipeline_stages": 13
+  },
+  "logged_evidence": [
+    "RMSE, MAE, R2, AUC-ROC, AUC-PR, F1 and accuracy metrics",
+    "cumulative PCA explained-variance JSON and PNG",
+    "ranked tree feature-importance metrics, names, JSON and PNG",
+    "full evaluation plots and tournament artifacts",
+    "serialized Spark PipelineModel"
+  ]
+}

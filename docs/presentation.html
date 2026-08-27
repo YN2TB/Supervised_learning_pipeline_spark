@@ -1,0 +1,1342 @@
+<title>Distributed MLlib Mechanics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;1,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+
+<style>
+:root {
+  --ground:   #F4F6F8;
+  --surface:  #FFFFFF;
+  --sunken:   #EAEEF2;
+  --ink:      #101A24;
+  --muted:    #5A6B7B;
+  --faint:    #8496A6;
+  --rule:     #D6DEE6;
+  --rule-firm:#B9C6D2;
+  --accent:   #10527F;
+  --accent-sf:#E4EEF6;
+  --signal:   #97540E;
+  --signal-sf:#F7EEE1;
+
+  --display: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+  --body: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+
+  --rail: 17rem;
+  --measure: 68ch;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:   #0C1218;
+    --surface:  #141D26;
+    --sunken:   #101922;
+    --ink:      #E4EBF2;
+    --muted:    #93A4B4;
+    --faint:    #6B7E8F;
+    --rule:     #22303C;
+    --rule-firm:#334656;
+    --accent:   #63ADE2;
+    --accent-sf:#132632;
+    --signal:   #D9A059;
+    --signal-sf:#241D12;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground:   #0C1218;
+  --surface:  #141D26;
+  --sunken:   #101922;
+  --ink:      #E4EBF2;
+  --muted:    #93A4B4;
+  --faint:    #6B7E8F;
+  --rule:     #22303C;
+  --rule-firm:#334656;
+  --accent:   #63ADE2;
+  --accent-sf:#132632;
+  --signal:   #D9A059;
+  --signal-sf:#241D12;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 17px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- masthead ---------- */
+
+.masthead {
+  border-bottom: 1px solid var(--rule-firm);
+  background: var(--surface);
+  padding: 4.5rem 2rem 3rem;
+}
+
+.masthead-inner {
+  max-width: 62rem;
+  margin: 0 auto;
+  display: grid;
+  gap: 1.5rem;
+}
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0;
+}
+
+h1 {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(2.3rem, 6vw, 3.9rem);
+  line-height: 1.02;
+  letter-spacing: -.022em;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.standfirst {
+  font-size: 1.16rem;
+  color: var(--muted);
+  max-width: 46ch;
+  margin: 0;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 2.6rem;
+  border-top: 1px solid var(--rule);
+  padding-top: 1.35rem;
+  margin-top: .6rem;
+}
+
+.fact { display: grid; gap: .18rem; padding: .3rem 0; }
+
+.fact dt {
+  font-family: var(--mono);
+  font-size: .68rem;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.fact dd {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 1.02rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- shell ---------- */
+
+.shell {
+  max-width: 78rem;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  gap: 3.5rem;
+  padding: 3.5rem 2rem 6rem;
+  align-items: start;
+}
+
+/* ---------- rail ---------- */
+
+.rail { position: sticky; top: 2rem; }
+
+.rail-head {
+  font-family: var(--mono);
+  font-size: .68rem;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding-bottom: .7rem;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: .6rem;
+}
+
+.rail ol { list-style: none; margin: 0; padding: 0; display: grid; gap: .1rem; }
+
+.rail a {
+  display: grid;
+  grid-template-columns: 2.5rem 1fr;
+  gap: .4rem;
+  padding: .3rem .5rem .3rem 0;
+  text-decoration: none;
+  color: var(--muted);
+  font-size: .87rem;
+  line-height: 1.32;
+  border-left: 2px solid transparent;
+  padding-left: .7rem;
+  transition: color .15s, border-color .15s;
+}
+
+/* Plain, not <code>: the global code rule paints a background and border,
+   which turned every rail number into a boxed chip. */
+.rail a .n {
+  font-family: var(--mono);
+  font-size: .76rem;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.rail li.top a { font-weight: 600; color: var(--ink); margin-top: .55rem; }
+.rail li.top:first-child a { margin-top: 0; }
+.rail li.top a .n { color: var(--accent); }
+
+.rail a:hover { color: var(--ink); }
+.rail a:hover .n { color: var(--accent); }
+
+.rail a.on {
+  color: var(--ink);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+.rail a.on .n { color: var(--accent); }
+
+.rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---------- sections ---------- */
+
+.body-col { min-width: 0; display: grid; gap: 4.5rem; }
+
+section { scroll-margin-top: 2rem; }
+
+.sec-open {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1.4rem;
+  align-items: baseline;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: .9rem;
+  margin-bottom: 2rem;
+}
+
+.sec-num {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: clamp(2.6rem, 7vw, 4.2rem);
+  line-height: .82;
+  letter-spacing: -.03em;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.sec-open h2 {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: clamp(1.35rem, 3vw, 1.85rem);
+  letter-spacing: -.015em;
+  margin: 0;
+  text-wrap: balance;
+}
+
+h3 {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 1.12rem;
+  letter-spacing: -.008em;
+  margin: 2.8rem 0 .8rem;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: .7rem;
+  align-items: baseline;
+  text-wrap: balance;
+}
+
+h3 .tag {
+  font-family: var(--mono);
+  font-size: .74rem;
+  font-weight: 400;
+  color: var(--accent);
+  letter-spacing: .04em;
+}
+
+h4 {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: .95rem;
+  margin: 1.9rem 0 .5rem;
+  color: var(--ink);
+}
+
+p { margin: 0 0 1.05rem; max-width: var(--measure); }
+
+.body-col > section > p,
+.body-col > section > h3,
+.body-col > section > h4 { max-width: var(--measure); }
+
+strong { font-weight: 600; }
+em { font-style: italic; }
+
+code {
+  font-family: var(--mono);
+  font-size: .855em;
+  background: var(--sunken);
+  padding: .1em .34em;
+  border-radius: 2px;
+  border: 1px solid var(--rule);
+}
+
+/* ---------- equation plates ---------- */
+
+.plate {
+  border: 1px solid var(--rule-firm);
+  background: var(--surface);
+  margin: 1.6rem 0 1.7rem;
+  max-width: var(--measure);
+  position: relative;
+}
+
+.plate-label {
+  font-family: var(--mono);
+  font-size: .66rem;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: .5rem .9rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--sunken);
+}
+
+.eq {
+  padding: 1.5rem 1.1rem;
+  text-align: center;
+  font-family: var(--body);
+  font-size: 1.16rem;
+  line-height: 1.75;
+  overflow-x: auto;
+}
+
+.eq.small { font-size: 1rem; }
+
+.plate-note {
+  border-top: 1px solid var(--rule);
+  padding: .7rem .9rem;
+  font-size: .87rem;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.plate-note p { margin: 0; max-width: none; }
+
+var, .v {
+  font-style: italic;
+  font-family: var(--body);
+}
+
+.op { font-style: normal; padding: 0 .12em; }
+
+sub, sup { font-size: .68em; font-style: normal; }
+
+/* The bar must land on the math axis, where = + - are centred.
+   vertical-align: middle puts the box's midpoint at baseline + half x-height,
+   which IS the math axis - so the bar aligns with the operators for free.
+   This only holds while the two rows are the same height, hence the
+   symmetric padding and the shared row sizing below. Never replace this with
+   a hand-tuned em offset: it aligns at one font size and breaks at every other. */
+.frac {
+  display: inline-grid;
+  grid-auto-rows: 1fr;
+  vertical-align: middle;
+  text-align: center;
+  padding: 0 .32em;
+  line-height: 1.28;
+}
+.frac > span:first-child {
+  border-bottom: 1px solid currentColor;
+  padding: 0 .3em .16em;
+  align-self: end;
+}
+.frac > span:last-child { padding: .16em .3em 0; align-self: start; }
+
+.big { font-size: 1.35em; font-style: normal; vertical-align: -.15em; }
+
+/* ---------- tables ---------- */
+
+.table-wrap {
+  overflow-x: auto;
+  margin: 1.5rem 0 1.8rem;
+  max-width: var(--measure);
+  border: 1px solid var(--rule-firm);
+  background: var(--surface);
+}
+
+table { border-collapse: collapse; width: 100%; font-size: .89rem; }
+
+caption {
+  caption-side: top;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: .66rem;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: .5rem .9rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--sunken);
+}
+
+th, td {
+  padding: .52rem .9rem;
+  text-align: left;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+
+thead th {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: .78rem;
+  letter-spacing: .02em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--rule-firm);
+}
+
+tbody tr:last-child td { border-bottom: none; }
+
+td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .84rem; }
+
+tr.hi td { background: var(--accent-sf); font-weight: 600; }
+
+/* ---------- callouts ---------- */
+
+.finding {
+  border-left: 3px solid var(--signal);
+  background: var(--signal-sf);
+  padding: 1rem 1.2rem;
+  margin: 1.6rem 0;
+  max-width: var(--measure);
+}
+
+.finding-head {
+  font-family: var(--mono);
+  font-size: .66rem;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--signal);
+  margin: 0 0 .45rem;
+}
+
+.finding p { margin: 0 0 .7rem; max-width: none; font-size: .95rem; }
+.finding p:last-child { margin-bottom: 0; }
+
+.aside {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-sf);
+  padding: 1rem 1.2rem;
+  margin: 1.6rem 0;
+  max-width: var(--measure);
+}
+
+.aside-head {
+  font-family: var(--mono);
+  font-size: .66rem;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 .45rem;
+}
+
+.aside p { margin: 0 0 .7rem; max-width: none; font-size: .95rem; }
+.aside p:last-child { margin-bottom: 0; }
+
+/* ---------- topology diagram ---------- */
+
+.topo {
+  border: 1px solid var(--rule-firm);
+  background: var(--surface);
+  margin: 1.6rem 0;
+  max-width: var(--measure);
+}
+
+.topo svg { display: block; width: 100%; height: auto; }
+
+/* ---------- closing ---------- */
+
+.closing {
+  border-top: 2px solid var(--ink);
+  padding-top: 2rem;
+  margin-top: 1rem;
+}
+
+footer {
+  border-top: 1px solid var(--rule);
+  padding: 2rem;
+  text-align: center;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .06em;
+}
+
+/* ---------- responsive ---------- */
+
+@media (width < 62rem) {
+  .shell { grid-template-columns: 1fr; gap: 2rem; padding: 2.5rem 1.35rem 4rem; }
+  .rail { position: static; border-bottom: 1px solid var(--rule); padding-bottom: 1rem; }
+  .rail ol { grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); display: grid; }
+  .masthead { padding: 3rem 1.35rem 2.25rem; }
+  body { font-size: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; scroll-behavior: auto !important; }
+}
+
+html { scroll-behavior: smooth; }
+</style>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <p class="eyebrow">Part A &middot; Mathematical foundations</p>
+    <h1>Distributed MLlib Mechanics</h1>
+    <p class="standfirst">
+      Why scaling, PCA and ensemble construction behave differently when the data
+      does not fit on one machine &mdash; derived, then measured against 5.7&nbsp;million flights.
+    </p>
+    <dl class="facts">
+      <div class="fact"><dt>Rows</dt><dd>5,704,000</dd></div>
+      <div class="fact"><dt>Features</dt><dd>80</dd></div>
+      <div class="fact"><dt>Engine</dt><dd>PySpark 3.5.4</dd></div>
+      <div class="fact"><dt>Horizon</dt><dd>Wheels-off</dd></div>
+    </dl>
+  </div>
+</header>
+
+<div class="shell">
+
+  <nav class="rail" aria-label="Contents">
+    <div class="rail-head">Contents</div>
+    <!-- Every label below is the section heading VERBATIM. A rail entry that
+         paraphrases its target makes the reader land somewhere that looks like
+         the wrong place. If a heading is edited, edit it here in the same pass. -->
+    <ol>
+      <li class="top"><a href="#a1"><span class="n">A1</span> <span>Scaling mathematics and distributed sparse operations</span></a></li>
+      <li><a href="#a11"><span class="n">A1.1</span> <span>Standardisation versus range scaling</span></a></li>
+      <li><a href="#a12"><span class="n">A1.2</span> <span>Why centering is dangerous on sparse vectors</span></a></li>
+      <li><a href="#a13"><span class="n">A1.3</span> <span>Compress, truncate, or neither</span></a></li>
+      <li class="top"><a href="#a2"><span class="n">A2</span> <span>Distributed PCA mechanics</span></a></li>
+      <li><a href="#a21"><span class="n">A2.1</span> <span>What is actually distributed</span></a></li>
+      <li><a href="#a22"><span class="n">A2.2</span> <span>From SVD to principal components</span></a></li>
+      <li><a href="#a23"><span class="n">A2.3</span> <span>A singular covariance, in practice</span></a></li>
+      <li class="top"><a href="#a3"><span class="n">A3</span> <span>Parametric models versus tree ensembles</span></a></li>
+      <li><a href="#a31"><span class="n">A3.1</span> <span>ElasticNet regression</span></a></li>
+      <li><a href="#a32"><span class="n">A3.2</span> <span>Generalised linear models and link functions</span></a></li>
+      <li><a href="#a33"><span class="n">A3.3</span> <span>LinearSVC and the soft-margin hinge loss</span></a></li>
+      <li><a href="#a34"><span class="n">A3.4</span> <span>Random Forest &mdash; bagging and parallel growth</span></a></li>
+      <li><a href="#a35"><span class="n">A3.5</span> <span>Gradient-Boosted Trees &mdash; sequential residual fitting</span></a></li>
+      <li><a href="#a36"><span class="n">A3.6</span> <span>The trade-off, and what the data said</span></a></li>
+    </ol>
+  </nav>
+
+  <main class="body-col">
+
+    <!-- ================= A1 ================= -->
+    <section id="a1">
+      <div class="sec-open">
+        <div class="sec-num">A1</div>
+        <h2>Scaling mathematics and distributed sparse operations</h2>
+      </div>
+
+      <p>
+        Feature scaling looks like a solved, mechanical step. On a distributed
+        sparse matrix it is neither: one boolean flag changes the memory
+        complexity of the entire pipeline, and the choice of transform can
+        destroy the strongest predictor in the dataset.
+      </p>
+
+      <h3 id="a11"><span class="tag">A1.1</span> Standardisation versus range scaling</h3>
+
+      <p>
+        <strong>Z-score.</strong> For feature <var>j</var> with mean
+        <var>&mu;<sub>j</sub></var> and standard deviation <var>&sigma;<sub>j</sub></var>:
+      </p>
+
+      <div class="plate">
+        <div class="plate-label">Standardisation &mdash; StandardScaler</div>
+        <div class="eq">
+          <var>z<sub>ij</sub></var> <span class="op">=</span>
+          <span class="frac">
+            <span><var>x<sub>ij</sub></var> <span class="op">&minus;</span> <var>&mu;<sub>j</sub></var></span>
+            <span><var>&sigma;<sub>j</sub></var></span>
+          </span>
+        </div>
+        <div class="plate-note">
+          <p>
+            Yields mean 0, variance 1. The transform is <em>unbounded</em>, so outliers
+            survive it &mdash; a value 40 standard deviations out is still 40 afterwards.
+          </p>
+        </div>
+      </div>
+
+      <p>
+        <strong>Min&ndash;max.</strong> Mapping onto a guaranteed range, by default
+        <span class="v">[0,&nbsp;1]</span>:
+      </p>
+
+      <div class="plate">
+        <div class="plate-label">Range scaling &mdash; MinMaxScaler</div>
+        <div class="eq small">
+          <var>x<sup>scaled</sup><sub>ij</sub></var> <span class="op">=</span>
+          <span class="frac">
+            <span><var>x<sub>ij</sub></var> <span class="op">&minus;</span> <var>x<sup>min</sup><sub>j</sub></var></span>
+            <span><var>x<sup>max</sup><sub>j</sub></var> <span class="op">&minus;</span> <var>x<sup>min</sup><sub>j</sub></var></span>
+          </span>
+          <span class="op">(</span>max <span class="op">&minus;</span> min<span class="op">)</span>
+          <span class="op">+</span> min
+        </div>
+        <div class="plate-note">
+          <p>
+            The bounded output suits distance kernels &mdash; but the mapping is defined by
+            exactly two order statistics, so a single extreme value sets the denominator.
+          </p>
+        </div>
+      </div>
+
+      <div class="finding">
+        <p class="finding-head">Concrete on this dataset</p>
+        <p>
+          <code>DEPARTURE_DELAY</code> has a maximum near <strong>1,650&nbsp;minutes</strong>
+          against a median of <strong>&minus;2</strong>. Min&ndash;max scaling would crush
+          almost the entire distribution into roughly the first <strong>2%</strong> of the
+          range, leaving the models to separate ordinary flights inside a sliver of the
+          available numeric space.
+        </p>
+      </div>
+
+      <p>
+        Both transforms are affine in <var>x</var>, so <em>neither changes the shape of
+        a distribution</em> &mdash; neither one fixes skew. That is what A1.3 is for.
+      </p>
+
+      <p>
+        <strong>Degenerate columns.</strong> If <var>&sigma;<sub>j</sub></var> = 0 the
+        z-score is undefined. Spark defines it as 0 rather than failing &mdash; numerically
+        safe, but with a downstream consequence we hit in practice (A2.3).
+      </p>
+
+      <h3 id="a12"><span class="tag">A1.2</span> Why centering is dangerous on sparse vectors</h3>
+
+      <p>
+        A <code>SparseVector</code> stores only its non-zero entries, as parallel index
+        and value arrays. Its memory is <var>O</var>(nnz), not <var>O</var>(<var>n</var>).
+        Centering breaks that representation outright. For any feature with
+        <var>&mu;<sub>j</sub></var> &ne; 0, a structural zero maps to:
+      </p>
+
+      <div class="plate">
+        <div class="plate-label">The centering trap</div>
+        <div class="eq">
+          0 <span class="op">&minus;</span> <var>&mu;<sub>j</sub></var>
+          <span class="op">=</span> <span class="op">&minus;</span><var>&mu;<sub>j</sub></var>
+          <span class="op">&ne;</span> 0
+        </div>
+        <div class="plate-note">
+          <p>
+            So <strong>every</strong> zero becomes an explicitly stored non-zero. Sparsity is
+            not reduced &mdash; it is destroyed, and the vector must be materialised dense.
+          </p>
+        </div>
+      </div>
+
+      <p>
+        The cost is a direct function of the one-hot expansion in the assembled vector:
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <caption>Assembled feature vector &mdash; density budget</caption>
+          <thead>
+            <tr><th>Quantity</th><th class="num">Value</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Total feature slots after assembly</td><td class="num">80</td></tr>
+            <tr><td>Slots from one-hot groups</td><td class="num">60</td></tr>
+            <tr><td>Non-zeros per row</td><td class="num">~24</td></tr>
+            <tr><td>Density</td><td class="num">~30%</td></tr>
+            <tr class="hi"><td>Cost of centering</td><td class="num">~3.3&times;</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        A <strong>3.3&times; increase in shuffle volume, cache footprint and GC pressure</strong>
+        across 5.7M rows &mdash; and it scales with the worst case, not the average. Push
+        <code>ROUTE</code> (4,279 levels) through one-hot instead of target encoding and
+        density falls below 1%, making centering a <strong>~100&times;</strong> penalty.
+      </p>
+
+      <h4>How <code>withStd</code> avoids it</h4>
+
+      <p>Scaling is multiplicative, and zero is a fixed point:</p>
+
+      <div class="plate">
+        <div class="plate-label">Sparsity-preserving scaling</div>
+        <div class="eq">
+          <var>x<sub>ij</sub></var>
+          <span class="op">&#8614;</span>
+          <span class="frac">
+            <span><var>x<sub>ij</sub></var></span>
+            <span><var>&sigma;<sub>j</sub></var></span>
+          </span>
+          <span style="padding-left:1.6em">0 <span class="op">&#8614;</span> 0</span>
+        </div>
+        <div class="plate-note">
+          <p>
+            The sparsity pattern survives exactly; only stored values change. Spark rescales
+            in place, touching <var>O</var>(nnz) entries.
+          </p>
+        </div>
+      </div>
+
+      <p>
+        Hence <code>withMean=False, withStd=True</code> is set deliberately, not left as an
+        untouched default. The cost &mdash; features scaled but not centred &mdash; is
+        irrelevant to the tree ensembles (splits are scale- and location-invariant) and is
+        absorbed by the fitted intercept in the regularised linear models.
+      </p>
+
+      <h3 id="a13"><span class="tag">A1.3</span> Compress, truncate, or neither</h3>
+
+      <p>
+        Affine scaling cannot fix skew, so heavily right-skewed columns are compressed
+        first. Two properties matter: the map is monotonic, so ordering is preserved and
+        tree splits are unaffected; and its derivative
+        <span class="v">1/(1+<var>x</var>)</span> shrinks as <var>x</var> grows, so large
+        values are pulled in far harder than small ones.
+      </p>
+
+      <div class="plate">
+        <div class="plate-label">Signed log &mdash; defined on all of &#8477;</div>
+        <div class="eq">
+          <var>f</var><span class="op">(</span><var>x</var><span class="op">)</span>
+          <span class="op">=</span>
+          sign<span class="op">(</span><var>x</var><span class="op">)</span>
+          <span class="op">&middot;</span>
+          ln<span class="op">(</span>1 <span class="op">+</span>
+          <span class="op">|</span><var>x</var><span class="op">|</span><span class="op">)</span>
+        </div>
+        <div class="plate-note">
+          <p>
+            Plain <span class="v">ln(1+<var>x</var>)</span> is undefined for
+            <var>x</var> &le; &minus;1, and <code>DEPARTURE_DELAY</code> is negative for every
+            early flight. The signed extension is odd, monotonic across zero, continuous with
+            <var>f</var>(0) = 0 &mdash; so sparsity still survives &mdash; and compresses both
+            tails alike.
+          </p>
+        </div>
+      </div>
+
+      <p>
+        Truncation and compression are different tools. Tukey fences
+        <span class="v">[<var>Q</var><sub>1</sub> &minus; 1.5&nbsp;IQR,
+        <var>Q</var><sub>3</sub> + 1.5&nbsp;IQR]</span> <em>remove</em> tail information;
+        log compression <em>retains</em> it with rank intact. But the lesson from this
+        dataset is that sometimes the right answer is <strong>neither</strong>.
+      </p>
+
+      <div class="finding">
+        <p class="finding-head">Measured &mdash; two wrong fixes before the right one</p>
+        <p>
+          <code>DEPARTURE_DELAY</code> and arrival delay are very nearly <em>linear</em>:
+          correlation <strong>0.947</strong>, slope near 1. Clipping first dropped that to
+          0.614, capping achievable <var>R</var><sup>2</sup> near 0.38. The obvious repair
+          &mdash; signed log instead &mdash; was <em>also</em> wrong: a monotone nonlinear
+          transform destroys exactly the structure a linear model exists to exploit.
+        </p>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>LinearRegression on a 2% sample &mdash; isolated A/B</caption>
+          <thead>
+            <tr><th>Treatment of <code>DEPARTURE_DELAY</code></th><th class="num"><var>R</var><sup>2</sup></th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Clipped only &mdash; first attempt</td><td class="num">0.390</td></tr>
+            <tr><td>Signed log only &mdash; second attempt</td><td class="num">0.409</td></tr>
+            <tr><td>Clipped + signed log</td><td class="num">0.409</td></tr>
+            <tr class="hi"><td>Raw, untransformed</td><td class="num">0.937</td></tr>
+            <tr><td>Raw + clipped + signed log</td><td class="num">0.937</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The raw column carries essentially all the signal; both derived views add nothing
+        measurable on top of it. The general principle: <strong>skew is a reason to
+        compress, contamination is a reason to truncate, but a feature that is large,
+        genuine and linearly related to the target needs neither.</strong> Reaching for a
+        transform because a distribution <em>looks</em> untidy is how signal gets destroyed.
+      </p>
+
+      <p>
+        <code>DISTANCE</code> is the case that does want compression &mdash; its fitted upper
+        fence lands at 2,091 miles, which would fold every transcontinental flight into one
+        value. <code>TAXI_OUT</code> is the case that genuinely wants truncation, where
+        extreme values really are operational anomalies.
+      </p>
+    </section>
+
+    <!-- ================= A2 ================= -->
+    <section id="a2">
+      <div class="sec-open">
+        <div class="sec-num">A2</div>
+        <h2>Distributed PCA mechanics</h2>
+      </div>
+
+      <h3 id="a21"><span class="tag">A2.1</span> What is actually distributed</h3>
+
+      <p>
+        PCA needs the eigendecomposition of the covariance of an
+        <var>m</var>&nbsp;&times;&nbsp;<var>n</var> matrix &mdash; here
+        <var>m</var>&nbsp;=&nbsp;5,704,000 and <var>n</var>&nbsp;=&nbsp;80. The essential
+        asymmetry is that <strong><var>m</var> is enormous and <var>n</var> is small</strong>,
+        and Spark's design follows entirely from it.
+      </p>
+
+      <div class="plate">
+        <div class="plate-label">The Gramian decomposes as a sum over rows</div>
+        <div class="eq">
+          <var>A</var><sup>&#8868;</sup><var>A</var>
+          <span class="op">=</span>
+          <span class="big">&Sigma;</span><sub>&thinsp;<var>i</var>=1</sub><sup><var>m</var></sup>
+          &nbsp;<var>a<sub>i</sub></var>&thinsp;<var>a<sub>i</sub></var><sup>&#8868;</sup>
+        </div>
+        <div class="plate-note">
+          <p>
+            Each term is <var>n</var>&nbsp;&times;&nbsp;<var>n</var>. Every executor scans only
+            its own partition, accumulating a local
+            <var>n</var>&nbsp;&times;&nbsp;<var>n</var> matrix; partial sums are combined by
+            <code>treeAggregate</code>, whose depth is logarithmic in the partition count.
+          </p>
+        </div>
+      </div>
+
+      <div class="topo">
+        <svg viewBox="0 0 640 220" role="img" aria-label="Executors each reduce their partition to an 80 by 80 matrix, combined by a tree-structured aggregation into a single driver-side SVD.">
+          <g font-family="IBM Plex Mono, monospace" font-size="10.5">
+            <!-- partitions -->
+            <g>
+              <rect x="16" y="24" width="88" height="34" fill="var(--sunken)" stroke="var(--rule-firm)"/>
+              <text x="60" y="45" text-anchor="middle" fill="var(--muted)">partition 1</text>
+              <rect x="16" y="66" width="88" height="34" fill="var(--sunken)" stroke="var(--rule-firm)"/>
+              <text x="60" y="87" text-anchor="middle" fill="var(--muted)">partition 2</text>
+              <rect x="16" y="108" width="88" height="34" fill="var(--sunken)" stroke="var(--rule-firm)"/>
+              <text x="60" y="129" text-anchor="middle" fill="var(--muted)">partition 3</text>
+              <rect x="16" y="150" width="88" height="34" fill="var(--sunken)" stroke="var(--rule-firm)"/>
+              <text x="60" y="171" text-anchor="middle" fill="var(--muted)">partition p</text>
+            </g>
+            <!-- local gramians -->
+            <g>
+              <rect x="160" y="24" width="96" height="34" fill="none" stroke="var(--accent)"/>
+              <text x="208" y="45" text-anchor="middle" fill="var(--accent)">80&#215;80</text>
+              <rect x="160" y="66" width="96" height="34" fill="none" stroke="var(--accent)"/>
+              <text x="208" y="87" text-anchor="middle" fill="var(--accent)">80&#215;80</text>
+              <rect x="160" y="108" width="96" height="34" fill="none" stroke="var(--accent)"/>
+              <text x="208" y="129" text-anchor="middle" fill="var(--accent)">80&#215;80</text>
+              <rect x="160" y="150" width="96" height="34" fill="none" stroke="var(--accent)"/>
+              <text x="208" y="171" text-anchor="middle" fill="var(--accent)">80&#215;80</text>
+            </g>
+            <!-- arrows p -> g -->
+            <g stroke="var(--rule-firm)" fill="none">
+              <path d="M104 41 H160"/><path d="M104 83 H160"/>
+              <path d="M104 125 H160"/><path d="M104 167 H160"/>
+            </g>
+            <!-- tree merge -->
+            <g stroke="var(--accent)" fill="none">
+              <path d="M256 41 H300 V62 H344"/>
+              <path d="M256 83 H300 V62"/>
+              <path d="M256 125 H300 V146 H344"/>
+              <path d="M256 167 H300 V146"/>
+              <path d="M344 62 H388 V104 H432"/>
+              <path d="M344 146 H388 V104"/>
+            </g>
+            <text x="300" y="16" text-anchor="middle" fill="var(--faint)">treeAggregate &mdash; O(log p) merges</text>
+            <!-- driver -->
+            <rect x="432" y="76" width="184" height="56" fill="var(--accent-sf)" stroke="var(--accent)"/>
+            <text x="524" y="98" text-anchor="middle" fill="var(--ink)" font-weight="500">driver</text>
+            <text x="524" y="115" text-anchor="middle" fill="var(--muted)">local Breeze SVD &mdash; O(n&#179;)</text>
+            <text x="524" y="152" text-anchor="middle" fill="var(--faint)">~51 KB crosses the network</text>
+            <text x="524" y="168" text-anchor="middle" fill="var(--faint)">the m&#215;n data never does</text>
+          </g>
+        </svg>
+      </div>
+
+      <div class="aside">
+        <p class="aside-head">A correction worth stating precisely</p>
+        <p>
+          It is often said Spark computes PCA <em>&ldquo;without collecting the covariance
+          matrix to the driver&rdquo;</em>. That is not quite right, and the distinction
+          matters. <code>RowMatrix.computePrincipalComponentsAndExplainedVariance</code>
+          <em>does</em> assemble the full <var>n</var>&nbsp;&times;&nbsp;<var>n</var>
+          covariance on the driver and run a <strong>local</strong> Breeze SVD on it.
+          What is never collected is the <em>data</em>.
+        </p>
+        <p>
+          The claim that survives scrutiny: cost is
+          <var>O</var>(<var>mn</var><sup>2</sup>/<var>p</var>) distributed plus
+          <var>O</var>(<var>n</var><sup>3</sup>) on the driver, and only the second term is
+          centralised. That is fine at <var>n</var>&nbsp;=&nbsp;80 &mdash; and is precisely
+          why it becomes the bottleneck as <var>n</var> grows, being cubic and
+          single-threaded.
+        </p>
+      </div>
+
+      <h3 id="a22"><span class="tag">A2.2</span> From SVD to principal components</h3>
+
+      <div class="plate">
+        <div class="plate-label">Why the right singular vectors are the components</div>
+        <div class="eq small">
+          <var>A</var><sup>&#8868;</sup><var>A</var> <span class="op">=</span>
+          <var>V</var>&Sigma;<sup>&#8868;</sup><var>U</var><sup>&#8868;</sup><var>U</var>&Sigma;<var>V</var><sup>&#8868;</sup>
+          <span class="op">=</span>
+          <var>V</var>&Sigma;<sup>2</sup><var>V</var><sup>&#8868;</sup>
+        </div>
+        <div class="plate-note">
+          <p>
+            Using <var>U</var><sup>&#8868;</sup><var>U</var> = <var>I</var>. So the columns of
+            <var>V</var> are the eigenvectors of the Gramian &mdash; the principal directions
+            &mdash; with eigenvalues
+            <var>&lambda;<sub>i</sub></var> = <var>&sigma;<sub>i</sub></var><sup>2</sup>.
+            The projection <var>AV<sub>k</sub></var> is a per-row map, so it is distributed
+            with <strong>no shuffle at all</strong>.
+          </p>
+        </div>
+      </div>
+
+      <div class="plate">
+        <div class="plate-label">Explained variance ratio</div>
+        <div class="eq">
+          EVR<span class="op">(</span><var>k</var><span class="op">)</span>
+          <span class="op">=</span>
+          <span class="frac">
+            <span><span class="big">&Sigma;</span><sub><var>i</var>=1</sub><sup><var>k</var></sup> <var>&lambda;<sub>i</sub></var></span>
+            <span><span class="big">&Sigma;</span><sub><var>j</var>=1</sub><sup><var>p</var></sup> <var>&lambda;<sub>j</sub></var></span>
+          </span>
+        </div>
+        <div class="plate-note">
+          <p>
+            The denominator equals tr(<var>A</var><sup>&#8868;</sup><var>A</var>), the sum of
+            per-feature variances &mdash; so with standardised inputs it is simply <var>p</var>.
+          </p>
+        </div>
+      </div>
+
+      <div class="finding">
+        <p class="finding-head">Measured &mdash; and unflattering to PCA</p>
+        <p>
+          Ten components retain only <strong>28.5%</strong> of the variance of the
+          80-dimensional space, and the cost lands directly on the models: linear regression
+          scores <var>R</var><sup>2</sup> = <strong>0.930</strong> on the full feature set
+          against <strong>0.703</strong> through <code>PCA(k=10)</code>.
+        </p>
+        <p>
+          That is not a bug &mdash; it is what PCA does to <em>this</em> feature space. Most
+          dimensions are one-hot indicators: close to mutually orthogonal, individually
+          low-variance, with little linear redundancy to exploit. PCA pays off when features
+          are strongly correlated; one-hot expansions of independent categoricals are close
+          to the opposite case. The scree curve shows exactly that &mdash; no elbow, just a
+          slow decline.
+        </p>
+      </div>
+
+      <h3 id="a23"><span class="tag">A2.3</span> A singular covariance, in practice</h3>
+
+      <p>
+        The driver-side SVD is not merely a scaling footnote &mdash; it is a failure mode.
+        The first tournament run died with <code>breeze.linalg.NotConvergedException</code>
+        inside <code>PCA.fit</code>. The causal chain is worth tracing, because every link
+        is individually reasonable:
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <caption>Failure chain &mdash; four correct behaviours composing into a crash</caption>
+          <thead><tr><th class="num">#</th><th>Step</th></tr></thead>
+          <tbody>
+            <tr><td class="num">1</td><td><code>OneHotEncoder(handleInvalid="keep")</code> reserves a slot for unseen categories</td></tr>
+            <tr><td class="num">2</td><td>On a small CV fold that slot never fires &mdash; the column is constant</td></tr>
+            <tr><td class="num">3</td><td><code>StandardScaler</code> maps a zero-variance column to all zeros (A1.1)</td></tr>
+            <tr><td class="num">4</td><td>The covariance matrix is <strong>singular</strong>; LAPACK fails to converge</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        Diagnostically the feature matrix contained no NaN and no Inf &mdash; 3 of 80 columns
+        were identically zero. The fix, a <code>VarianceThresholdSelector</code> ahead of PCA,
+        is both the repair and the correct modelling choice: a constant feature carries no
+        information by definition.
+      </p>
+
+      <div class="aside">
+        <p class="aside-head">Note the interaction</p>
+        <p>
+          The bug surfaced <em>only</em> at small sample sizes, because on the full data most
+          categories appear in every fold. Testing at reduced scale is what exposed it &mdash;
+          the cheap run was not merely faster, it was strictly more informative.
+        </p>
+      </div>
+    </section>
+
+    <!-- ================= A3 ================= -->
+    <section id="a3">
+      <div class="sec-open">
+        <div class="sec-num">A3</div>
+        <h2>Parametric models versus tree ensembles</h2>
+      </div>
+
+      <h3 id="a31"><span class="tag">A3.1</span> ElasticNet regression</h3>
+
+      <div class="plate">
+        <div class="plate-label">Spark's LinearRegression objective</div>
+        <div class="eq small">
+          <var>J</var><span class="op">(</span><var>&beta;</var><span class="op">)</span>
+          <span class="op">=</span>
+          <span class="frac"><span>1</span><span>2<var>n</var></span></span>
+          <span class="big">&Sigma;</span><sub><var>i</var></sub>
+          <span class="op">(</span><var>y<sub>i</sub></var> <span class="op">&minus;</span>
+          <var>x<sub>i</sub></var><sup>&#8868;</sup><var>&beta;</var><span class="op">)</span><sup>2</sup>
+          <span class="op">+</span> <var>&lambda;</var>
+          <span class="op">[</span> <var>&alpha;</var>&#8214;<var>&beta;</var>&#8214;<sub>1</sub>
+          <span class="op">+</span>
+          <span class="frac"><span>1<span class="op">&minus;</span><var>&alpha;</var></span><span>2</span></span>
+          &#8214;<var>&beta;</var>&#8214;<sub>2</sub><sup>2</sup> <span class="op">]</span>
+        </div>
+        <div class="plate-note">
+          <p>
+            with <code>regParam</code> = <var>&lambda;</var> and
+            <code>elasticNetParam</code> = <var>&alpha;</var>.
+          </p>
+        </div>
+      </div>
+
+      <p>
+        The two penalties do different jobs. The <span class="v">&ell;<sub>2</sub></span>
+        term adds <var>&lambda;</var>(1&minus;<var>&alpha;</var>)<var>I</var> to the normal
+        equations, so <var>X</var><sup>&#8868;</sup><var>X</var> is invertible even when it
+        would otherwise be singular &mdash; buying stability against the collinearity our
+        features have by construction (<code>DISTANCE</code>, <code>GC_DISTANCE_MI</code>
+        and <code>SCHEDULED_TIME</code> are near-collinear).
+      </p>
+
+      <p>
+        The <span class="v">&ell;<sub>1</sub></span> term is not differentiable at zero; its
+        subgradient is a constant &plusmn;<var>&lambda;&alpha;</var>, applying the same push
+        regardless of coefficient size and driving small coefficients <em>exactly</em> to
+        zero. That is genuine selection, not just shrinkage.
+      </p>
+
+      <p>
+        Why mix them: lasso alone, given a group of correlated features, picks one
+        arbitrarily and zeroes the rest &mdash; and which one it picks is unstable across
+        resamples. The ridge component restores the grouping effect, so correlated features
+        shrink together. Because <span class="v">&ell;<sub>1</sub></span> is non-smooth,
+        Spark optimises with OWL-QN rather than plain L-BFGS.
+      </p>
+
+      <h3 id="a32"><span class="tag">A3.2</span> Generalised linear models and link functions</h3>
+
+      <div class="plate">
+        <div class="plate-label">The link connects predictor to response</div>
+        <div class="eq">
+          <var>g</var><span class="op">(</span>&#120124;<span class="op">[</span><var>Y</var><span class="op">]</span><span class="op">)</span>
+          <span class="op">=</span> <var>X&beta;</var>
+        </div>
+        <div class="plate-note">
+          <p>
+            Ordinary least squares is the special case of a Gaussian response with the
+            identity link. The link earns its keep when the identity is wrong about the
+            response's <em>support</em> or its <em>mean&ndash;variance relationship</em>.
+          </p>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>Variance functions &mdash; why the family choice matters</caption>
+          <thead>
+            <tr><th>Family</th><th>Support</th><th><var>V</var>(<var>&mu;</var>)</th><th>Suits</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Gaussian</td><td>&#8477;</td><td><span class="v">1</span></td><td>constant absolute error</td></tr>
+            <tr><td>Poisson</td><td>0, 1, 2, &hellip;</td><td><span class="v"><var>&mu;</var></span></td><td>counts; dispersion grows with level</td></tr>
+            <tr><td>Gamma</td><td>(0, &infin;)</td><td><span class="v"><var>&mu;</var><sup>2</sup></span></td><td>constant <em>relative</em> error</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="finding">
+        <p class="finding-head">Measured &mdash; a variance function, demonstrated the hard way</p>
+        <p>
+          The Gamma/log arm failed violently: <var>R</var><sup>2</sup> = <strong>&minus;207</strong>,
+          RMSE <strong>568.90</strong> against MAE <strong>10.80</strong> &mdash; a 53&times;
+          ratio where ~1.3&times; is normal, i.e. a handful of astronomically large
+          <span class="v">exp(<var>x</var><sup>&#8868;</sup><var>&beta;</var>)</span> predictions
+          dominating the squared error.
+        </p>
+        <p>
+          Gamma's <var>V</var>(<var>&mu;</var>) = <var>&mu;</var><sup>2</sup> amplifies exactly
+          these tail excursions, where Poisson's <var>V</var>(<var>&mu;</var>) = <var>&mu;</var>
+          grows only linearly. Switching family moved <var>R</var><sup>2</sup> by more than two
+          orders of magnitude &mdash; to &minus;0.036. Still the weakest regressor, because a
+          log link models a <em>multiplicative</em> response while arrival delay is
+          <em>additive</em> in departure delay. The mismatch is structural, not a tuning failure.
+        </p>
+      </div>
+
+      <h3 id="a33"><span class="tag">A3.3</span> LinearSVC and the soft-margin hinge loss</h3>
+
+      <p>
+        A separating hyperplane has geometric margin
+        <span class="v">2/&#8214;<var>w</var>&#8214;</span>, so maximising the margin means
+        minimising <span class="v">&#8214;<var>w</var>&#8214;<sup>2</sup></span>. Real data is
+        not separable, so slack variables permit violations. The constraints are tight at the
+        optimum, which collapses the constrained problem into an unconstrained one:
+      </p>
+
+      <div class="plate">
+        <div class="plate-label">Hinge-loss form</div>
+        <div class="eq small">
+          min
+          <span class="frac"><span>1</span><span>2</span></span>
+          &#8214;<var>w</var>&#8214;<sup>2</sup>
+          <span class="op">+</span> <var>C</var>
+          <span class="big">&Sigma;</span><sub><var>i</var></sub>
+          max<span class="op">(</span>0, 1 <span class="op">&minus;</span>
+          <var>y<sub>i</sub></var><span class="op">(</span><var>w</var><sup>&#8868;</sup><var>x<sub>i</sub></var>
+          <span class="op">+</span> <var>b</var><span class="op">)</span><span class="op">)</span>
+        </div>
+        <div class="plate-note">
+          <p>
+            The hinge is <strong>zero</strong> once a point is correctly classified
+            <em>beyond</em> the margin. Correct, confident points contribute nothing to the
+            gradient, so the solution depends only on the support vectors near the boundary
+            &mdash; the property that distinguishes it from log loss.
+          </p>
+        </div>
+      </div>
+
+      <div class="aside">
+        <p class="aside-head">Spark's parameterisation inverts the usual intuition</p>
+        <p>
+          <code>LinearSVC</code> minimises the <em>averaged</em> loss with an
+          <span class="v">&ell;<sub>2</sub></span> penalty scaled by <code>regParam</code>.
+          Comparing forms gives
+          <var>C</var> &#8596; 1/(<var>n&lambda;</var>) &mdash; so
+          <strong>larger <code>regParam</code> means <em>weaker</em> regularisation in
+          <var>C</var> terms</strong>, the opposite of what people expect.
+        </p>
+        <p>
+          LinearSVC is also linear-only in Spark: the dual needs an
+          <var>n</var>&nbsp;&times;&nbsp;<var>n</var> Gram matrix, which at
+          <var>n</var> = 4.5M is 2&times;10<sup>13</sup> entries and hopeless. Scaling matters
+          for exactly this reason &mdash; the penalty is not scale-invariant.
+        </p>
+      </div>
+
+      <h3 id="a34"><span class="tag">A3.4</span> Random Forest &mdash; bagging and parallel growth</h3>
+
+      <p>
+        Two independent randomisations decorrelate the trees. <strong>Bagging</strong> gives
+        each tree a bootstrap resample; the probability a row is omitted is
+        <span class="v">(1&minus;1/<var>n</var>)<sup><var>n</var></sup> &rarr; e<sup>&minus;1</sup> &asymp; 0.368</span>,
+        so each tree sees ~63.2% of distinct rows. <strong>Feature subspace sampling</strong>
+        restricts each <em>node</em> to a random subset of features.
+      </p>
+
+      <div class="plate">
+        <div class="plate-label">Why both randomisations are required</div>
+        <div class="eq">
+          Var<span class="op">(</span>avg<span class="op">)</span> <span class="op">=</span>
+          <var>&rho;&sigma;</var><sup>2</sup> <span class="op">+</span>
+          <span class="frac">
+            <span>1 <span class="op">&minus;</span> <var>&rho;</var></span>
+            <span><var>B</var></span>
+          </span>
+          <var>&sigma;</var><sup>2</sup>
+        </div>
+        <div class="plate-note">
+          <p>
+            Adding trees drives the second term to zero but <strong>cannot touch the
+            first</strong>. Only reducing the pairwise correlation <var>&rho;</var> lowers the
+            floor &mdash; and forcing different trees to consider different features at each
+            node is what does that. Here <code>DEPARTURE_DELAY</code> is exactly the dominant
+            predictor that would otherwise become the root split in nearly every bootstrap.
+          </p>
+        </div>
+      </div>
+
+      <p>
+        <strong>Parallel growth.</strong> The trees are conditionally independent given the
+        data, so Spark does something better than one-tree-per-task: it grows <em>all</em>
+        trees breadth-first, level by level. Each pass computes sufficient statistics for
+        every node on the frontier across every tree, making the number of data passes
+        <var>O</var>(depth) rather than <var>O</var>(<var>B</var>&nbsp;&times;&nbsp;depth).
+      </p>
+
+      <h3 id="a35"><span class="tag">A3.5</span> Gradient-Boosted Trees &mdash; sequential residual fitting</h3>
+
+      <div class="plate">
+        <div class="plate-label">Stage-wise additive construction</div>
+        <div class="eq">
+          <var>F<sub>m</sub></var><span class="op">(</span><var>x</var><span class="op">)</span>
+          <span class="op">=</span>
+          <var>F</var><sub><var>m</var>&minus;1</sub><span class="op">(</span><var>x</var><span class="op">)</span>
+          <span class="op">+</span> <var>&nu;</var>&thinsp;<var>h<sub>m</sub></var><span class="op">(</span><var>x</var><span class="op">)</span>
+        </div>
+        <div class="plate-note">
+          <p>
+            where <var>h<sub>m</sub></var> is fitted to the <strong>negative gradient</strong>
+            of the loss at the current prediction. For squared error that gradient <em>is</em>
+            the residual &mdash; which is where &ldquo;fitting the residuals&rdquo; comes from.
+            It is the special case, not the definition.
+          </p>
+        </div>
+      </div>
+
+      <p>
+        <strong>Histogram binning.</strong> Exact split-finding would sort every value at
+        every node &mdash; <var>O</var>(<var>n</var>&thinsp;log&thinsp;<var>n</var>) per feature
+        per node, and a sort is a shuffle. Instead Spark discretises each continuous feature
+        <em>once</em> into at most <code>maxBins</code> intervals via a sampled quantile
+        sketch. Split finding then reduces to accumulating per-bin statistics: one pass,
+        <var>O</var>(<var>n</var>), no shuffle. <code>maxBins</code> must also be at least the
+        largest categorical arity &mdash; our grid uses 32 and 64 against a maximum of 24.
+      </p>
+
+      <p>
+        <strong>Why trees cannot be built in parallel.</strong>
+        <var>h<sub>m</sub></var> is fitted to residuals of
+        <var>F</var><sub><var>m</var>&minus;1</sub>, so tree <var>m</var> cannot start before
+        tree <var>m</var>&minus;1 finishes &mdash; a genuine sequential dependency, unlike
+        bagging's conditional independence. The parallelism is therefore <em>within</em> each
+        tree: across partitions when accumulating histograms, and across features and bins
+        when evaluating splits.
+      </p>
+
+      <h3 id="a36"><span class="tag">A3.6</span> The trade-off, and what the data said</h3>
+
+      <div class="table-wrap">
+        <table>
+          <caption>Bagging versus boosting &mdash; structural comparison</caption>
+          <thead>
+            <tr><th></th><th>Random Forest</th><th>Gradient-Boosted Trees</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Ensemble direction</td><td>parallel, averaging</td><td>sequential, additive</td></tr>
+            <tr><td>Attacks</td><td>variance</td><td>bias</td></tr>
+            <tr><td>Tree dependence</td><td>independent given data</td><td>tree <var>m</var> needs <var>m</var>&minus;1</td></tr>
+            <tr><td>Data passes</td><td><var>O</var>(depth)</td><td><var>O</var>(<var>M</var> &times; depth)</td></tr>
+            <tr><td>More trees</td><td>safe &mdash; converges</td><td>can overfit</td></tr>
+            <tr><td>Distributed scaling</td><td>near-linear in executors</td><td>limited by the chain</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="finding">
+        <p class="finding-head">The result that matters &mdash; 14 arms, full data</p>
+        <p>
+          Neither ensemble won. <strong>Linear regression took the regression task outright</strong>
+          at <var>R</var><sup>2</sup> = 0.9289, against GBT's 0.8938 and Random Forest's 0.8731
+          &mdash; while costing 2.1&times; and 1.7&times; less wall-clock time.
+        </p>
+        <p>
+          Arrival delay is very nearly an affine function of departure delay. A single
+          coefficient captures that exactly; both ensembles must approximate the same straight
+          line with piecewise-constant regions, spending depth budget to do worse. Model
+          capacity beyond the true functional form buys nothing, and axis-aligned splits are a
+          poor basis for a diagonal relationship.
+        </p>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <caption>Cost of PCA(k=10) &mdash; every paired arm, no exceptions</caption>
+          <thead>
+            <tr><th>Model</th><th class="num">no-PCA</th><th class="num">PCA</th><th class="num">Cost</th></tr>
+          </thead>
+          <tbody>
+            <tr class="hi"><td>linear_regression</td><td class="num">0.9289</td><td class="num">0.7034</td><td class="num">&minus;0.226</td></tr>
+            <tr><td>gbt_regressor</td><td class="num">0.8938</td><td class="num">0.8513</td><td class="num">&minus;0.043</td></tr>
+            <tr><td>random_forest_regressor</td><td class="num">0.8731</td><td class="num">0.8558</td><td class="num">&minus;0.017</td></tr>
+            <tr><td>gbt_classifier <span style="color:var(--faint)">(AUC)</span></td><td class="num">0.9817</td><td class="num">0.9699</td><td class="num">&minus;0.012</td></tr>
+            <tr><td>linear_svc <span style="color:var(--faint)">(AUC)</span></td><td class="num">0.9806</td><td class="num">0.9657</td><td class="num">&minus;0.015</td></tr>
+            <tr><td>random_forest_classifier <span style="color:var(--faint)">(AUC)</span></td><td class="num">0.9792</td><td class="num">0.9635</td><td class="num">&minus;0.016</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        The linear model suffers most, by an order of magnitude. It has no way to recover a
+        predictor rotated into a discarded component, whereas a tree can partially reconstruct
+        the signal from whichever surviving components correlate with it. PCA is required by
+        the brief, is defensible as decorrelation and compression &mdash; and here costs
+        accuracy in every single arm while also destroying feature-importance
+        interpretability. The two-arm design is what makes that visible rather than hiding it
+        behind one reported number.
+      </p>
+
+      <div class="closing">
+        <h4>Classification: a tie decided on cost</h4>
+        <p>
+          GBT (0.9817), LinearSVC (0.9806) and Random Forest (0.9792) are separated by
+          0.0025 AUC &mdash; well inside what a different seed would move. But LinearSVC gets
+          there in <strong>959&nbsp;s against GBT's 2,336&nbsp;s</strong>, a 2.4&times;
+          difference, for the reason derived in A3.5: boosting cannot parallelise across its
+          trees, while a hinge-loss objective is convex and solved in a handful of distributed
+          gradient passes. Thresholding at 30 minutes turns a near-linear regression surface
+          into a near-linear decision boundary, so the simplest model finds it. On this data
+          the ensembles are not buying accuracy &mdash; they are buying time.
+        </p>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  Part A &middot; Advanced PySpark MLlib &middot; 2015 US DOT on-time performance
+</footer>
+
+<script>
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll('.rail a'));
+  var targets = links.map(function (a) {
+    return document.getElementById(a.getAttribute('href').slice(1));
+  }).filter(Boolean);
+
+  if (!('IntersectionObserver' in window) || !targets.length) return;
+
+  var visible = new Map();
+
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting) visible.set(e.target.id, e.intersectionRatio);
+      else visible.delete(e.target.id);
+    });
+    if (!visible.size) return;
+    // Highest heading currently on screen wins, not merely the largest slice.
+    var best = null;
+    targets.forEach(function (t) {
+      if (visible.has(t.id) && best === null) best = t.id;
+    });
+    links.forEach(function (a) {
+      a.classList.toggle('on', a.getAttribute('href') === '#' + best);
+    });
+  }, { rootMargin: '-8% 0px -70% 0px', threshold: [0, 1] });
+
+  targets.forEach(function (t) { io.observe(t); });
+})();
+</script>
