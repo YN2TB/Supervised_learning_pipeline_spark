@@ -1,0 +1,706 @@
+<title>Kịch bản Brief MLlib</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+:root {
+  --ground:    #F6F5F2;
+  --surface:   #FFFFFF;
+  --sunken:    #EDEBE6;
+  --ink:       #1B211E;
+  --muted:     #5D6862;
+  --faint:     #8B958F;
+  --rule:      #DEDBD4;
+  --rule-firm: #C3BFB6;
+  --accent:    #1F5F4B;
+  --accent-sf: #E3EDE8;
+  --signal:    #9A5B16;
+  --signal-sf: #F6EDE0;
+
+  --sans: 'Be Vietnam Pro', 'Segoe UI', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', Consolas, monospace;
+  --measure: 66ch;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground:    #12140F;
+    --surface:   #1A1E19;
+    --sunken:    #161A15;
+    --ink:       #E8EAE4;
+    --muted:     #A0AAA2;
+    --faint:     #77827A;
+    --rule:      #2A312B;
+    --rule-firm: #3D473F;
+    --accent:    #6FC0A0;
+    --accent-sf: #16241E;
+    --signal:    #D9A25C;
+    --signal-sf: #241C11;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground:    #12140F;
+  --surface:   #1A1E19;
+  --sunken:    #161A15;
+  --ink:       #E8EAE4;
+  --muted:     #A0AAA2;
+  --faint:     #77827A;
+  --rule:      #2A312B;
+  --rule-firm: #3D473F;
+  --accent:    #6FC0A0;
+  --accent-sf: #16241E;
+  --signal:    #D9A25C;
+  --signal-sf: #241C11;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16.5px;
+  line-height: 1.68;
+}
+
+.wrap { max-width: 54rem; margin: 0 auto; padding: 0 1.5rem 5rem; }
+
+/* ---------- head ---------- */
+
+.head { padding: 3.5rem 0 2rem; border-bottom: 2px solid var(--ink); }
+
+.kicker {
+  font-family: var(--mono);
+  font-size: .72rem;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 .9rem;
+}
+
+h1 {
+  font-size: clamp(1.9rem, 5vw, 2.7rem);
+  font-weight: 700;
+  letter-spacing: -.02em;
+  line-height: 1.14;
+  margin: 0 0 .9rem;
+  text-wrap: balance;
+}
+
+.lede { font-size: 1.08rem; color: var(--muted); margin: 0; max-width: 48ch; }
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin-top: 1.6rem;
+}
+
+.chip {
+  font-family: var(--mono);
+  font-size: .72rem;
+  padding: .3rem .6rem;
+  border: 1px solid var(--rule-firm);
+  color: var(--muted);
+  background: var(--surface);
+}
+
+/* ---------- run of show ---------- */
+
+.runofshow {
+  margin: 2rem 0 0;
+  border: 1px solid var(--rule-firm);
+  background: var(--surface);
+}
+
+.runofshow h2 {
+  font-size: .74rem;
+  font-family: var(--mono);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin: 0;
+  padding: .6rem .9rem;
+  border-bottom: 1px solid var(--rule);
+  background: var(--sunken);
+  font-weight: 400;
+}
+
+.runofshow ol { list-style: none; margin: 0; padding: 0; }
+
+.runofshow li {
+  display: grid;
+  grid-template-columns: 3.2rem 1fr auto;
+  gap: .8rem;
+  padding: .5rem .9rem;
+  border-bottom: 1px solid var(--rule);
+  font-size: .92rem;
+  align-items: baseline;
+}
+
+.runofshow li:last-child { border-bottom: none; }
+.runofshow a { color: var(--ink); text-decoration: none; }
+.runofshow a:hover { color: var(--accent); text-decoration: underline; }
+.runofshow .t { font-family: var(--mono); font-size: .78rem; color: var(--accent); }
+.runofshow .d { font-family: var(--mono); font-size: .78rem; color: var(--faint); }
+
+/* ---------- parts ---------- */
+
+.part { margin-top: 3.6rem; scroll-margin-top: 1.5rem; }
+
+.part-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 1rem;
+  align-items: baseline;
+  border-bottom: 1px solid var(--rule-firm);
+  padding-bottom: .6rem;
+  margin-bottom: 1.3rem;
+}
+
+.part-n {
+  font-family: var(--mono);
+  font-size: .82rem;
+  color: var(--surface);
+  background: var(--accent);
+  padding: .18rem .5rem;
+}
+
+.part-head h2 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -.012em;
+  margin: 0;
+  text-wrap: balance;
+}
+
+.part-time { font-family: var(--mono); font-size: .78rem; color: var(--faint); white-space: nowrap; }
+
+h3 {
+  font-size: 1.02rem;
+  font-weight: 600;
+  margin: 1.9rem 0 .5rem;
+  color: var(--ink);
+}
+
+p { margin: 0 0 .95rem; max-width: var(--measure); }
+
+ul, ol.body { margin: 0 0 1.1rem; padding-left: 1.3rem; max-width: var(--measure); }
+li { margin-bottom: .38rem; }
+
+strong { font-weight: 600; }
+
+code {
+  font-family: var(--mono);
+  font-size: .86em;
+  background: var(--sunken);
+  border: 1px solid var(--rule);
+  padding: .08em .32em;
+  border-radius: 2px;
+}
+
+/* ---------- say / note blocks ---------- */
+
+.say {
+  border-left: 3px solid var(--accent);
+  background: var(--accent-sf);
+  padding: .95rem 1.15rem;
+  margin: 1.1rem 0 1.3rem;
+  max-width: var(--measure);
+}
+
+.say-h, .note-h {
+  font-family: var(--mono);
+  font-size: .68rem;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  margin: 0 0 .45rem;
+}
+
+.say-h { color: var(--accent); }
+.note-h { color: var(--signal); }
+
+.say p, .note p { margin: 0 0 .6rem; max-width: none; }
+.say p:last-child, .note p:last-child { margin-bottom: 0; }
+.say p { font-size: 1.01rem; }
+
+.note {
+  border-left: 3px solid var(--signal);
+  background: var(--signal-sf);
+  padding: .95rem 1.15rem;
+  margin: 1.1rem 0 1.3rem;
+  max-width: var(--measure);
+  font-size: .94rem;
+}
+
+/* ---------- tables ---------- */
+
+.tw {
+  overflow-x: auto;
+  border: 1px solid var(--rule-firm);
+  background: var(--surface);
+  margin: 1.2rem 0 1.4rem;
+  max-width: var(--measure);
+}
+
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+
+th, td { padding: .5rem .8rem; text-align: left; border-bottom: 1px solid var(--rule); vertical-align: top; }
+thead th { font-size: .78rem; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--rule-firm); background: var(--sunken); }
+tbody tr:last-child td { border-bottom: none; }
+td.n, th.n { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---------- q&a ---------- */
+
+details {
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  margin-bottom: .5rem;
+  max-width: var(--measure);
+}
+
+summary {
+  padding: .6rem .9rem;
+  cursor: pointer;
+  font-weight: 500;
+  font-size: .95rem;
+  list-style: none;
+  display: grid;
+  grid-template-columns: 1.1rem 1fr;
+  gap: .5rem;
+  align-items: baseline;
+}
+
+summary::-webkit-details-marker { display: none; }
+summary::before { content: "?"; font-family: var(--mono); color: var(--accent); font-weight: 600; }
+summary:hover { color: var(--accent); }
+summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+details > div { padding: 0 .9rem .8rem 2.5rem; font-size: .93rem; color: var(--muted); }
+details > div p { max-width: none; }
+
+footer {
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: .74rem;
+  color: var(--faint);
+}
+
+@media (width < 40rem) {
+  .runofshow li { grid-template-columns: 2.8rem 1fr; }
+  .runofshow .d { display: none; }
+  .part-head { grid-template-columns: auto 1fr; }
+  .part-time { grid-column: 2; }
+}
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header class="head">
+  <p class="kicker">Kịch bản họp nhóm · đọc theo thứ tự</p>
+  <h1>Brief đề tài MLlib cho cả nhóm</h1>
+  <p class="lede">
+    Nội dung cần nói để giải thích đề bài trong file PDF cho các bạn chưa đọc.
+    Mỗi phần có phần <em>nói gì</em> và phần <em>giải thích thêm nếu bị hỏi</em>.
+  </p>
+  <div class="meta">
+    <span class="chip">Tổng: ~30 phút</span>
+    <span class="chip">100 điểm</span>
+    <span class="chip">Part A 35 · Part B 65</span>
+  </div>
+</header>
+
+<nav class="runofshow">
+  <h2>Trình tự buổi họp</h2>
+  <ol>
+    <li><span class="t">3 ph</span><a href="#p1">Đề bài yêu cầu cái gì</a><span class="d">tổng quan</span></li>
+    <li><span class="t">2 ph</span><a href="#p2">Dữ liệu và hai bài toán</a><span class="d">dataset</span></li>
+    <li><span class="t">8 ph</span><a href="#p3">Part A — phần lý thuyết, 35 điểm</a><span class="d">báo cáo</span></li>
+    <li><span class="t">12 ph</span><a href="#p4">Part B — phần code, 65 điểm</a><span class="d">4 task</span></li>
+    <li><span class="t">3 ph</span><a href="#p5">Nộp cái gì và chấm ra sao</a><span class="d">deliverables</span></li>
+    <li><span class="t">2 ph</span><a href="#p6">Chia việc</a><span class="d">phân công</span></li>
+  </ol>
+</nav>
+
+<!-- ============ 1 ============ -->
+<section class="part" id="p1">
+  <div class="part-head">
+    <span class="part-n">1</span>
+    <h2>Đề bài yêu cầu cái gì</h2>
+    <span class="part-time">~3 phút</span>
+  </div>
+
+  <div class="say">
+    <p class="say-h">Nói gì</p>
+    <p>
+      Đề này không phải là bài &ldquo;train một model rồi lấy accuracy&rdquo;. Nó yêu cầu dựng
+      <strong>một pipeline PySpark hoàn chỉnh kiểu production</strong>: tự viết class
+      Transformer riêng, tự viết UDF tăng tốc bằng Arrow, giảm chiều bằng PCA phân tán,
+      tune tham số song song, log toàn bộ thí nghiệm bằng MLflow, rồi serialize model ra
+      để chạy inference trên luồng streaming.
+    </p>
+    <p>
+      Điểm mấu chốt của đề là hai chữ <strong>leak-proof</strong> &mdash; pipeline không được
+      để dữ liệu test rò rỉ vào lúc train. Đây là thứ mất điểm nhiều nhất nếu làm sai,
+      và cũng là thứ khó nhìn ra nhất vì model vẫn chạy bình thường, chỉ là kết quả đẹp giả.
+    </p>
+  </div>
+
+  <p>Ba nhóm kỹ thuật đề bắt buộc phải có:</p>
+
+  <ul>
+    <li><strong>Parametric models</strong> &mdash; Linear Regression, GLM, LinearSVC.</li>
+    <li><strong>Tree ensembles</strong> &mdash; Random Forest, Gradient-Boosted Trees.</li>
+    <li><strong>Hạ tầng</strong> &mdash; custom Transformer, <code>pandas_udf</code> (Arrow),
+      PCA phân tán, <code>CrossValidator</code> song song, MLflow Registry, streaming inference.</li>
+  </ul>
+
+  <div class="note">
+    <p class="note-h">Nhấn mạnh chỗ này</p>
+    <p>
+      Đề chấm <strong>cách làm</strong> nhiều hơn <strong>con số cuối cùng</strong>. Một pipeline
+      sạch, giải thích được từng bước, sẽ ăn điểm hơn một model có metric cao mà không
+      chứng minh được là không bị leak.
+    </p>
+  </div>
+</section>
+
+<!-- ============ 2 ============ -->
+<section class="part" id="p2">
+  <div class="part-head">
+    <span class="part-n">2</span>
+    <h2>Dữ liệu và hai bài toán</h2>
+    <span class="part-time">~2 phút</span>
+  </div>
+
+  <div class="say">
+    <p class="say-h">Nói gì</p>
+    <p>
+      Dữ liệu là <strong>US Flight Delays (USDOT) trên Kaggle</strong> &mdash; dữ liệu chuyến bay
+      nội địa Mỹ năm 2015, khoảng 5,8 triệu dòng, file CSV gần 600 MB. Đề yêu cầu dataset
+      phải có đủ ba loại cột: liên tục, phân loại nhiều giá trị (high-cardinality), và thời gian nhiễu.
+      Bộ này có đủ cả ba.
+    </p>
+    <p>Và phải làm <strong>hai bài toán cùng lúc</strong> trên cùng một pipeline:</p>
+  </div>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Bài toán</th><th>Target</th><th>Metric</th></tr></thead>
+      <tbody>
+        <tr><td>Regression</td><td>Số phút trễ khi hạ cánh (<code>ARRIVAL_DELAY</code>)</td><td>R², RMSE, MAE</td></tr>
+        <tr><td>Classification</td><td>Trễ nghiêm trọng: trễ <strong>&gt; 30 phút</strong></td><td>AUC-ROC, AUC-PR, F1</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <details>
+    <summary>Tại sao phải làm cả hai mà không chọn một?</summary>
+    <div><p>Đề ghi rõ là cả hai. Ngoài ra Task 3 bắt buộc phải có LinearSVC &mdash; mà LinearSVC
+    là model phân loại nhị phân, không dùng cho regression được. Nên bắt buộc phải có nhánh
+    classification thì mới đủ 5 thuật toán.</p></div>
+  </details>
+</section>
+
+<!-- ============ 3 ============ -->
+<section class="part" id="p3">
+  <div class="part-head">
+    <span class="part-n">3</span>
+    <h2>Part A &mdash; phần lý thuyết, 35 điểm</h2>
+    <span class="part-time">~8 phút</span>
+  </div>
+
+  <div class="say">
+    <p class="say-h">Nói gì</p>
+    <p>
+      Part A là <strong>một bài thuyết trình</strong> về toán và cơ chế phân tán của MLlib.
+      Đề nói rõ: <em>không cần nhắc lại định nghĩa cơ bản đã học ở ML1</em>, chỉ recap nhanh
+      rồi trả lời thẳng câu hỏi, và <strong>tập trung vào khía cạnh Spark</strong>.
+      Tức là không phải viết lại &ldquo;PCA là gì&rdquo;, mà là &ldquo;Spark tính PCA trên dữ liệu
+      phân tán bằng cách nào&rdquo;.
+    </p>
+  </div>
+
+  <h3>3.1 &mdash; Toán về scaling và sparse vector</h3>
+  <ul>
+    <li>Viết công thức <strong>z-score</strong> và <strong>min&ndash;max</strong>, so sánh khi nào dùng cái nào.</li>
+    <li><strong>Câu quan trọng nhất của mục này:</strong> giải thích chi tiết tại sao
+      <code>withMean=True</code> lại là vấn đề với <code>SparseVector</code> trên hệ phân tán,
+      và <code>withStd</code> tránh được việc phình bộ nhớ như thế nào.</li>
+    <li>Derive cách xử lý skew và outlier bằng log-transform <code>ln(1+x)</code> trước khi scale.</li>
+  </ul>
+
+  <div class="note">
+    <p class="note-h">Ý chính để trả lời câu withMean</p>
+    <p>
+      Sparse vector chỉ lưu các phần tử khác 0. Khi trừ đi trung bình, mọi số 0 biến thành
+      <code>−μ</code> tức là khác 0 &mdash; nên vector buộc phải chuyển sang dạng dense, bộ nhớ
+      phình lên. Còn chia cho độ lệch chuẩn thì <code>0 chia σ vẫn bằng 0</code>, cấu trúc sparse
+      được giữ nguyên. Đó là lý do dùng <code>withMean=False, withStd=True</code>.
+    </p>
+  </div>
+
+  <h3>3.2 &mdash; Cơ chế PCA phân tán</h3>
+  <ul>
+    <li>Giải thích Spark dùng <strong>SVD trên <code>RowMatrix</code></strong> để tính PCA
+      mà không phải gom toàn bộ ma trận dữ liệu về Driver.</li>
+    <li>Derive công thức <strong>tỷ lệ phương sai giải thích</strong>: tổng <code>k</code> trị riêng
+      đầu chia tổng tất cả trị riêng.</li>
+  </ul>
+
+  <h3>3.3 &mdash; Model tham số so với tree ensemble</h3>
+  <ul>
+    <li>Derive <strong>hàm mục tiêu ElasticNet</strong>, giải thích vai trò của L1 và L2.</li>
+    <li>Giải thích <strong>link function trong GLM</strong> (Gamma/Poisson) &mdash; đề có ghi
+      &ldquo;be careful&rdquo; ở chỗ này, nên phải nói kỹ.</li>
+    <li>Derive <strong>hinge loss</strong> của soft-margin SVM.</li>
+    <li><strong>Random Forest:</strong> bagging, lấy mẫu tập con feature, và sinh cây song song
+      trên các executor.</li>
+    <li><strong>GBT:</strong> fit residual tuần tự, chia bin theo histogram (<code>maxBins</code>),
+      và <em>tại sao GBT không dựng cây song song được</em>.</li>
+  </ul>
+
+  <details>
+    <summary>Vì sao GBT không song song hoá được mà RF thì được?</summary>
+    <div><p>RF: các cây độc lập với nhau khi đã có dữ liệu, nên dựng đồng thời thoải mái.
+    GBT: cây thứ <em>m</em> học trên phần dư của cây thứ <em>m−1</em>, nên bắt buộc phải chờ
+    cây trước xong. Song song trong GBT chỉ nằm <em>bên trong</em> một cây &mdash; khi gom
+    histogram qua các partition và khi duyệt điểm cắt.</p></div>
+  </details>
+</section>
+
+<!-- ============ 4 ============ -->
+<section class="part" id="p4">
+  <div class="part-head">
+    <span class="part-n">4</span>
+    <h2>Part B &mdash; phần code, 65 điểm</h2>
+    <span class="part-time">~12 phút</span>
+  </div>
+
+  <div class="say">
+    <p class="say-h">Nói gì</p>
+    <p>
+      Part B chia làm 4 task. Mình đi lần lượt, mỗi task nói rõ <em>phải nộp ra file nào</em>.
+    </p>
+  </div>
+
+  <h3>Task 1 &mdash; Custom Transformer và tối ưu PyArrow <span style="color:var(--faint);font-weight:400">(15 điểm)</span></h3>
+  <ol class="body">
+    <li><strong>Vectorized UDF bằng PyArrow:</strong> viết một <code>pandas_udf</code> để tính
+      một chỉ số liên tục theo domain &mdash; ví dụ khoảng cách haversine giữa hai sân bay.
+      Điểm mấu chốt là nó chạy ở tốc độ C, không phải Python row-by-row.</li>
+    <li><strong><code>OutlierIQRTruncator</code>:</strong> kế thừa <code>pyspark.ml.Transformer</code>,
+      tính <code>Q1</code>, <code>Q3</code> phân tán và cắt các giá trị vượt ngoài
+      <code>1.5 × IQR</code>.</li>
+    <li><strong>Target encoding không leak:</strong> encode biến phân loại nhiều giá trị,
+      và trung bình target <strong>chỉ được tính trên tập train</strong>.</li>
+  </ol>
+
+  <div class="note">
+    <p class="note-h">Chỗ dễ mất điểm nhất trong cả đề</p>
+    <p>
+      Đề viết là &ldquo;subclass Transformer&rdquo;. Nhưng nếu làm đúng chữ &mdash; một Transformer
+      thuần &mdash; thì mỗi lần <code>transform</code> nó lại tự tính lại <code>Q1/Q3</code> hoặc
+      trung bình target <em>trên chính tập đang biến đổi</em>, tức là tính cả trên tập test.
+      Đó chính là leak. Cách đúng là tách thành cặp <strong>Estimator/Model</strong>: fit học
+      tham số trên train, model chỉ áp dụng tham số đã đóng băng. Nếu nhóm làm vậy thì
+      <strong>phải ghi rõ lý do trong báo cáo</strong> &mdash; giải thích được thì đây là điểm cộng,
+      không giải thích thì trông như làm sai đề.
+    </p>
+  </div>
+
+  <h3>Task 2 &mdash; Dựng Pipeline và tracking bằng MLflow <span style="color:var(--faint);font-weight:400">(15 điểm)</span></h3>
+  <p>Pipeline phải có đủ, đúng thứ tự:</p>
+  <p><code>StringIndexer</code> → <code>OneHotEncoder</code> → <code>VectorAssembler</code> →
+     <code>StandardScaler</code> → <code>PCA(k=10)</code></p>
+  <p>Và <strong>vẽ biểu đồ phương sai giải thích tích luỹ</strong> &mdash; chú ý là
+     <em>tích luỹ</em> (cộng dồn), không phải từng thành phần riêng lẻ.</p>
+  <p>Về MLflow, dùng <code>mlflow.pyspark.ml</code> và phải log đủ:</p>
+  <ul>
+    <li>Tự động log hyperparameter (<code>regParam</code>, <code>maxDepth</code>, <code>numTrees</code>).</li>
+    <li>Feature importance, biểu đồ explained variance, và các metric R², RMSE, MAE, AUC-ROC.</li>
+    <li><strong>Đăng ký model thắng cuộc vào Model Registry</strong>, có gắn stage
+      <code>Staging → Production</code>.</li>
+  </ul>
+
+  <details>
+    <summary>Lưu ý về phiên bản MLflow</summary>
+    <div><p>Phải dùng <strong>MLflow 2.x</strong>. Từ 3.x trở đi hàm
+    <code>transition_model_version_stage</code> đã bị bỏ, thay bằng alias &mdash; mà đề thì yêu cầu
+    đúng chữ &ldquo;stage tags Staging → Production&rdquo;. Ngoài ra nên dùng backend SQLite
+    thay vì lưu file, vì Model Registry không chạy được trên file store.</p></div>
+  </details>
+
+  <h3>Task 3 &mdash; Giải đấu model và tune song song <span style="color:var(--faint);font-weight:400">(20 điểm)</span></h3>
+  <p>Train <strong>5 thuật toán</strong> trên <strong>cùng một tỷ lệ chia 80/20</strong>:</p>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th class="n">#</th><th>Thuật toán</th><th>Ghi chú của đề</th></tr></thead>
+      <tbody>
+        <tr><td class="n">1</td><td>Linear Regression (ElasticNet)</td><td>α = 0.5, λ = 0.1</td></tr>
+        <tr><td class="n">2</td><td>GLM</td><td>họ Gamma hoặc Poisson, link log</td></tr>
+        <tr><td class="n">3</td><td>LinearSVC</td><td>phân loại nhị phân</td></tr>
+        <tr><td class="n">4</td><td>Random Forest</td><td>Regressor và Classifier</td></tr>
+        <tr><td class="n">5</td><td>Gradient-Boosted Trees</td><td>Regressor và Classifier</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Về cross-validation, đề yêu cầu cụ thể:</p>
+  <ul>
+    <li><code>ParamGridBuilder</code> phải quét qua <strong>độ sâu cây, số bin, và lưới regularization</strong>
+      &mdash; đủ cả ba loại.</li>
+    <li>Phải <strong>set rõ ràng <code>CrossValidator(parallelism=4)</code></strong> để các lần thử
+      chạy đồng thời trên các executor slot. Chỗ này đề ghi &ldquo;explicitly&rdquo;, nên cứ để
+      nguyên số 4 trong code cho dễ chấm.</li>
+    <li>5-fold.</li>
+  </ul>
+
+  <div class="note">
+    <p class="note-h">Cảnh báo về thời gian chạy</p>
+    <p>
+      5 thuật toán × 5 fold × lưới tham số × 4,5 triệu dòng là <strong>nhiều giờ</strong>.
+      Cách xử lý: tune trên một <strong>mẫu nhỏ</strong> rồi mới refit tham số thắng cuộc
+      trên toàn bộ tập train &mdash; đây là cách làm chuẩn, chỉ cần ghi rõ trong báo cáo.
+      Nhớ chừa sẵn một buổi tối để chạy, đừng để sát hạn.
+    </p>
+  </div>
+
+  <h3>Task 4 &mdash; Serialize và streaming inference</h3>
+  <ul>
+    <li>Lưu <code>PipelineModel</code> đã fit ra đĩa hoặc vào MLflow artifact.</li>
+    <li>Viết <code>inference.py</code> load model đã serialize và chấm điểm trên một
+      DataFrame JSON dạng streaming qua <code>spark.readStream</code>.</li>
+    <li>Mục đích là chứng minh <strong>tương thích schema không cần downtime</strong> và
+      <strong>chấm điểm stateless</strong>.</li>
+  </ul>
+
+  <details>
+    <summary>Lỗi hay gặp khi load model ở máy khác</summary>
+    <div><p>Model đã serialize tham chiếu tới các class custom <em>theo tên đầy đủ</em>. Nên khi
+    chạy <code>spark-submit</code> phải truyền <code>--py-files custom_transformers.py</code>,
+    nếu không lúc deserialize sẽ báo không tìm thấy class. Ngoài ra file-source streaming
+    không tự suy ra schema được, nên phải khai báo schema tường minh.</p></div>
+  </details>
+</section>
+
+<!-- ============ 5 ============ -->
+<section class="part" id="p5">
+  <div class="part-head">
+    <span class="part-n">5</span>
+    <h2>Nộp cái gì và chấm ra sao</h2>
+    <span class="part-time">~3 phút</span>
+  </div>
+
+  <div class="say">
+    <p class="say-h">Nói gì</p>
+    <p>
+      Đề cho sẵn <strong>cấu trúc thư mục bắt buộc</strong>. Tên thư mục gốc phải theo đúng mẫu
+      <code>lab-0506-advanced-mllib-<em>tênnhóm</em></code>, và bên trong phải có đủ các file sau.
+      Thiếu file nào là mất điểm phần đó, kể cả khi code có chạy.
+    </p>
+  </div>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Đường dẫn</th><th>Nội dung</th></tr></thead>
+      <tbody>
+        <tr><td><code>custom_transformers.py</code></td><td>Class Transformer tự viết và <code>pandas_udf</code></td></tr>
+        <tr><td><code>mllib_pipeline.py</code></td><td>Script chính: đọc dữ liệu → tune → log MLflow</td></tr>
+        <tr><td><code>inference.py</code></td><td>Streaming inference, load model đã serialize</td></tr>
+        <tr><td><code>benchmark_results.py</code></td><td>Trích metric và vẽ feature importance</td></tr>
+        <tr><td><code>docs/REPORT.md</code></td><td>Derivation toán, phần SVD, phân tích benchmark</td></tr>
+        <tr><td><code>models/</code></td><td><strong>Artifact pipeline đã serialize</strong></td></tr>
+        <tr><td><code>submit_pipeline.sh</code></td><td>Script chạy production bằng <code>spark-submit</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <p class="note-h">Bẫy dễ dính</p>
+    <p>
+      Thư mục <code>models/</code> nằm trong danh sách bắt buộc. Nếu nhóm cho nó vào
+      <code>.gitignore</code> vì &ldquo;file build ra&rdquo; thì lúc nộp repo sẽ <strong>không có
+      model</strong>. Cùng lý do với thư mục chứa biểu đồ mà <code>REPORT.md</code> có tham chiếu tới.
+      Kiểm tra lại bằng cách clone thử repo ra chỗ khác xem còn đủ file không.
+    </p>
+  </div>
+
+  <h3>Thang điểm</h3>
+  <div class="tw">
+    <table>
+      <thead><tr><th>Hạng mục</th><th class="n">Điểm</th></tr></thead>
+      <tbody>
+        <tr><td>Chặt chẽ về lý thuyết và toán học</td><td class="n">35</td></tr>
+        <tr><td>Custom Transformer và PyArrow</td><td class="n">15</td></tr>
+        <tr><td>Pipeline và PCA</td><td class="n">15</td></tr>
+        <tr><td>Tune nhiều model và CV song song</td><td class="n">20</td></tr>
+        <tr><td>MLflow và streaming</td><td class="n">15</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    Để ý: <strong>lý thuyết chiếm 35 điểm</strong> &mdash; nhiều hơn bất kỳ hạng mục code nào.
+    Đừng dồn hết công sức vào code rồi viết báo cáo qua loa.
+  </p>
+</section>
+
+<!-- ============ 6 ============ -->
+<section class="part" id="p6">
+  <div class="part-head">
+    <span class="part-n">6</span>
+    <h2>Chia việc</h2>
+    <span class="part-time">~2 phút</span>
+  </div>
+
+  <div class="say">
+    <p class="say-h">Nói gì</p>
+    <p>
+      Đề tách khá sạch thành các mảng ít đụng nhau. Gợi ý chia theo <em>ranh giới file</em>
+      để tránh conflict khi merge:
+    </p>
+  </div>
+
+  <div class="tw">
+    <table>
+      <thead><tr><th>Mảng</th><th>File chính</th><th>Phụ thuộc</th></tr></thead>
+      <tbody>
+        <tr><td>Lý thuyết Part A</td><td><code>docs/REPORT.md</code></td><td>Cần số liệu cuối từ mảng tournament</td></tr>
+        <tr><td>Transformer và UDF</td><td><code>custom_transformers.py</code></td><td>Làm được ngay, không chờ ai</td></tr>
+        <tr><td>Pipeline và tournament</td><td><code>mllib_pipeline.py</code></td><td>Chờ Transformer xong</td></tr>
+        <tr><td>Streaming và serialize</td><td><code>inference.py</code></td><td>Chờ có model đã lưu</td></tr>
+        <tr><td>Biểu đồ và bảng kết quả</td><td><code>benchmark_results.py</code></td><td>Chờ MLflow có dữ liệu</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>
+    Việc nên làm sớm nhất là <strong>dựng môi trường chạy được</strong>. Spark rất kén phiên bản
+    Java và Python; nếu để tới cuối mới cài thì sẽ mất cả buổi chỉ để sửa lỗi môi trường
+    thay vì làm bài.
+  </p>
+
+  <div class="say">
+    <p class="say-h">Kết lại</p>
+    <p>
+      Nhắc cả nhóm hai điều: <strong>không để leak dữ liệu</strong>, và
+      <strong>báo cáo lý thuyết nặng điểm hơn code</strong>. Hai điều đó quyết định phần lớn
+      số điểm cuối cùng.
+    </p>
+  </div>
+</section>
+
+<footer>
+  Kịch bản brief · đề tài MLlib · dữ liệu chuyến bay USDOT 2015
+</footer>
+
+</div>
