@@ -22,7 +22,7 @@
   --body: 'Source Serif 4', Georgia, 'Times New Roman', serif;
   --mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
 
-  --rail: 15rem;
+  --rail: 17rem;
   --measure: 68ch;
 }
 
@@ -181,22 +181,28 @@ h1 {
   transition: color .15s, border-color .15s;
 }
 
-.rail a code {
+/* Plain, not <code>: the global code rule paints a background and border,
+   which turned every rail number into a boxed chip. */
+.rail a .n {
   font-family: var(--mono);
   font-size: .76rem;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
 
+.rail li.top a { font-weight: 600; color: var(--ink); margin-top: .55rem; }
+.rail li.top:first-child a { margin-top: 0; }
+.rail li.top a .n { color: var(--accent); }
+
 .rail a:hover { color: var(--ink); }
-.rail a:hover code { color: var(--accent); }
+.rail a:hover .n { color: var(--accent); }
 
 .rail a.on {
   color: var(--ink);
   border-left-color: var(--accent);
   font-weight: 600;
 }
-.rail a.on code { color: var(--accent); }
+.rail a.on .n { color: var(--accent); }
 
 .rail a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -333,14 +339,26 @@ var, .v {
 
 sub, sup { font-size: .68em; font-style: normal; }
 
+/* The bar must land on the math axis, where = + - are centred.
+   vertical-align: middle puts the box's midpoint at baseline + half x-height,
+   which IS the math axis - so the bar aligns with the operators for free.
+   This only holds while the two rows are the same height, hence the
+   symmetric padding and the shared row sizing below. Never replace this with
+   a hand-tuned em offset: it aligns at one font size and breaks at every other. */
 .frac {
   display: inline-grid;
-  vertical-align: -.55em;
+  grid-auto-rows: 1fr;
+  vertical-align: middle;
   text-align: center;
-  padding: 0 .3em;
+  padding: 0 .32em;
+  line-height: 1.28;
 }
-.frac > span:first-child { border-bottom: 1px solid currentColor; padding: 0 .25em .12em; }
-.frac > span:last-child { padding: .12em .25em 0; }
+.frac > span:first-child {
+  border-bottom: 1px solid currentColor;
+  padding: 0 .3em .16em;
+  align-self: end;
+}
+.frac > span:last-child { padding: .16em .3em 0; align-self: start; }
 
 .big { font-size: 1.35em; font-style: normal; vertical-align: -.15em; }
 
@@ -500,22 +518,25 @@ html { scroll-behavior: smooth; }
 
   <nav class="rail" aria-label="Contents">
     <div class="rail-head">Contents</div>
+    <!-- Every label below is the section heading VERBATIM. A rail entry that
+         paraphrases its target makes the reader land somewhere that looks like
+         the wrong place. If a heading is edited, edit it here in the same pass. -->
     <ol>
-      <li><a href="#a1"><code>A1</code> <span>Scaling &amp; sparse operations</span></a></li>
-      <li><a href="#a11"><code>A1.1</code> <span>Z-score vs. min&ndash;max</span></a></li>
-      <li><a href="#a12"><code>A1.2</code> <span>The centering trap</span></a></li>
-      <li><a href="#a13"><code>A1.3</code> <span>Compress, truncate, or neither</span></a></li>
-      <li><a href="#a2"><code>A2</code> <span>Distributed PCA</span></a></li>
-      <li><a href="#a21"><code>A2.1</code> <span>What is actually distributed</span></a></li>
-      <li><a href="#a22"><code>A2.2</code> <span>SVD to components</span></a></li>
-      <li><a href="#a23"><code>A2.3</code> <span>A singular covariance</span></a></li>
-      <li><a href="#a3"><code>A3</code> <span>Parametric vs. ensembles</span></a></li>
-      <li><a href="#a31"><code>A3.1</code> <span>ElasticNet</span></a></li>
-      <li><a href="#a32"><code>A3.2</code> <span>GLM link functions</span></a></li>
-      <li><a href="#a33"><code>A3.3</code> <span>Hinge loss</span></a></li>
-      <li><a href="#a34"><code>A3.4</code> <span>Bagging</span></a></li>
-      <li><a href="#a35"><code>A3.5</code> <span>Boosting</span></a></li>
-      <li><a href="#a36"><code>A3.6</code> <span>The trade-off</span></a></li>
+      <li class="top"><a href="#a1"><span class="n">A1</span> <span>Scaling mathematics and distributed sparse operations</span></a></li>
+      <li><a href="#a11"><span class="n">A1.1</span> <span>Standardisation versus range scaling</span></a></li>
+      <li><a href="#a12"><span class="n">A1.2</span> <span>Why centering is dangerous on sparse vectors</span></a></li>
+      <li><a href="#a13"><span class="n">A1.3</span> <span>Compress, truncate, or neither</span></a></li>
+      <li class="top"><a href="#a2"><span class="n">A2</span> <span>Distributed PCA mechanics</span></a></li>
+      <li><a href="#a21"><span class="n">A2.1</span> <span>What is actually distributed</span></a></li>
+      <li><a href="#a22"><span class="n">A2.2</span> <span>From SVD to principal components</span></a></li>
+      <li><a href="#a23"><span class="n">A2.3</span> <span>A singular covariance, in practice</span></a></li>
+      <li class="top"><a href="#a3"><span class="n">A3</span> <span>Parametric models versus tree ensembles</span></a></li>
+      <li><a href="#a31"><span class="n">A3.1</span> <span>ElasticNet regression</span></a></li>
+      <li><a href="#a32"><span class="n">A3.2</span> <span>Generalised linear models and link functions</span></a></li>
+      <li><a href="#a33"><span class="n">A3.3</span> <span>LinearSVC and the soft-margin hinge loss</span></a></li>
+      <li><a href="#a34"><span class="n">A3.4</span> <span>Random Forest &mdash; bagging and parallel growth</span></a></li>
+      <li><a href="#a35"><span class="n">A3.5</span> <span>Gradient-Boosted Trees &mdash; sequential residual fitting</span></a></li>
+      <li><a href="#a36"><span class="n">A3.6</span> <span>The trade-off, and what the data said</span></a></li>
     </ol>
   </nav>
 
@@ -605,7 +626,7 @@ html { scroll-behavior: smooth; }
         safe, but with a downstream consequence we hit in practice (A2.3).
       </p>
 
-      <h3 id="a12"><span class="tag">A1.2</span> Why <code>withMean=True</code> is dangerous on sparse vectors</h3>
+      <h3 id="a12"><span class="tag">A1.2</span> Why centering is dangerous on sparse vectors</h3>
 
       <p>
         A <code>SparseVector</code> stores only its non-zero entries, as parallel index
