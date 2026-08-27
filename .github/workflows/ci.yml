@@ -1,0 +1,45 @@
+name: CI (test)
+
+# Only the test branch carries project code; main holds README + .gitignore.
+on:
+  push:
+    branches: [test]
+  pull_request:
+    branches: [test]
+  workflow_dispatch:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # PySpark 3.5 needs a JVM, and 17 is what the project pins locally.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # 3.11, not 3.12: on 3.12.0 the Python workers exit 0 without writing to
+      # their socket and every task dies with EOFException. See SETUP.md.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      # Deliberately NOT `pip install -r requirements.txt`: that file is a
+      # frozen Windows environment and pins pywin32, which has no Linux wheel.
+      # These four are all the gate below actually imports.
+      - name: Install runtime
+        run: pip install pyspark==3.5.4 pandas pyarrow numpy
+
+      - name: Byte-compile every module
+        run: python -m compileall -q . -x '\.venv|\.jdk|\.hadoop'
+
+      - name: Custom transformer gate
+        env:
+          PYSPARK_PYTHON: python
+          PYSPARK_DRIVER_PYTHON: python
+        run: python scripts/ci_transformer_check.py
