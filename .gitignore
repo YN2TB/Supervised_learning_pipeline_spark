@@ -15,17 +15,16 @@ data/airlines.csv
 data/parquet/
 mlruns/
 mlflow.db
-models/
 stream_input/
 stream_output/
 checkpoints/
 
 # --- Generated figures/tables (reproduced by benchmark_results.py) ---
-# Everything in here is derived from the MLflow store, including
-# results_table.md, which REPORT.md includes. Kept out of the repo so a
-# provisional table from a small validation run can never be mistaken for
-# the real tournament results.
-docs/benchmarks/*
+# These WERE ignored, so a provisional table from a small validation run could
+# never be mistaken for the real results. That risk is gone - the full 14-arm
+# tournament is done - and both docs/benchmarks/ and models/ are named in the
+# brief's required deliverable tree, so they are tracked now. ~840 KB total.
+docs/benchmarks/*.log
 
 # --- Editor ---
 # Obsidian vault config, so REPORT.md can be read rendered. Anywhere in the

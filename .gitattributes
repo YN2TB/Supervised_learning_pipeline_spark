@@ -1,0 +1,14 @@
+# The serialized PipelineModel must survive a round-trip through git byte for
+# byte. Its metadata is JSON read back through Hadoop, and the sibling .crc
+# files are checksums over those exact bytes - let git convert LF to CRLF on
+# checkout and the checksums no longer match, so the model fails to load on
+# whichever machine cloned it. Never let these be treated as text.
+models/** -text
+
+# Figures and the JSON the report is built from: same reasoning, no diffing
+# value, and PNGs must not be touched at all.
+docs/benchmarks/*.png binary
+docs/benchmarks/*.json -text
+
+# Keep shell scripts LF so they still run under Git Bash / spark-submit.
+*.sh text eol=lf

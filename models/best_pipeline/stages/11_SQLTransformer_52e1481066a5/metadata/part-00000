@@ -1,0 +1,1 @@
+{"class":"org.apache.spark.ml.feature.SQLTransformer","timestamp":1787766355333,"sparkVersion":"3.5.4","uid":"SQLTransformer_52e1481066a5","paramMap":{"statement":"SELECT *, features_selected AS features FROM __THIS__"},"defaultParamMap":{}}
