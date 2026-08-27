@@ -45,7 +45,7 @@ STREAM_OUT = path("stream_output")
 CHECKPOINT = path("checkpoints", "inference")
 
 
-def load_serving_schema() -> tuple[StructType, float]:
+def load_serving_schema() -> tuple[StructType, float, str]:
     """Rebuild the training-time input schema published next to the model."""
     meta_path = os.path.join(MODEL_DIR, "input_schema.json")
     if not os.path.exists(meta_path):
@@ -66,7 +66,12 @@ def load_serving_schema() -> tuple[StructType, float]:
                 f"unsupported type {f['type']!r} for column {f['name']!r} in "
                 f"{meta_path}; add it to the map in load_serving_schema()")
         fields.append(StructField(f["name"], kind(), True))
-    return StructType(fields), float(meta.get("glm_offset", 0.0))
+    # label / winner are written by mllib_pipeline.register_winner once the
+    # tournament picks a model. They are absent if this schema predates a
+    # registration, in which case assume the unshifted label.
+    return (StructType(fields),
+            float(meta.get("glm_offset", 0.0)),
+            meta.get("label", "label_delay"))
 
 
 def main() -> None:
@@ -82,8 +87,8 @@ def main() -> None:
         os.makedirs(d, exist_ok=True)
 
     spark = build_spark("streaming-inference", cores="4")
-    schema, _ = load_serving_schema()
-    print(f"serving schema: {len(schema.fields)} columns")
+    schema, glm_offset, label = load_serving_schema()
+    print(f"serving schema: {len(schema.fields)} columns  label={label}")
 
     if args.from_registry:
         import mlflow
@@ -106,6 +111,18 @@ def main() -> None:
     # The identical PipelineModel used for batch scoring, applied unchanged to
     # a streaming DataFrame: stateless, so every micro-batch is independent.
     scored = model.transform(events)
+
+    # A GLM winner was trained on label_glm = ARRIVAL_DELAY + glm_offset,
+    # because a log link needs a strictly positive response. Its predictions
+    # therefore come back on the shifted scale and have to be shifted back, or
+    # every number served is glm_offset minutes too high - with nothing to
+    # signal it, since a delay shifted by 88 minutes is still a plausible
+    # delay. Undone here rather than in the model so the saved PipelineModel
+    # stays exactly what was trained and scored offline.
+    if label == "label_glm" and glm_offset:
+        print(f"undoing GLM label shift of {glm_offset:.1f} min on predictions")
+        scored = scored.withColumn("prediction",
+                                   F.col("prediction") - F.lit(glm_offset))
 
     keep = [c for c in ("AIRLINE", "ORIGIN_AIRPORT", "DESTINATION_AIRPORT", "ROUTE",
                         "DEPARTURE_DELAY", "DISTANCE", "prediction")

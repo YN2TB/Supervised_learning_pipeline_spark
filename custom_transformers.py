@@ -195,6 +195,25 @@ class SignedLog1pTransformer(Transformer, HasInputCols, HasOutputCols,
 # ---------------------------------------------------------------------------
 # MaterializeTransformer
 # ---------------------------------------------------------------------------
+# DataFrames persisted by MaterializeCache, awaiting release. Module level
+# because the persisting stage is buried inside a Pipeline the caller does not
+# hold a reference to; release_caches() is called between tournament arms.
+_PERSISTED: list = []
+
+
+def release_caches() -> int:
+    """Unpersist everything MaterializeCache has cached. Returns the count."""
+    n = 0
+    for df in _PERSISTED:
+        try:
+            df.unpersist()
+            n += 1
+        except Exception:  # noqa: BLE001 - a dead session must not stop cleanup
+            pass
+    _PERSISTED.clear()
+    return n
+
+
 class MaterializeCacheModel(Model, DefaultParamsReadable, DefaultParamsWritable):
     """Pass-through half of :class:`MaterializeCache`."""
 
@@ -236,6 +255,13 @@ class MaterializeCache(Estimator, DefaultParamsReadable, DefaultParamsWritable):
         if not dataset.isStreaming:
             from pyspark import StorageLevel
             dataset.persist(StorageLevel.MEMORY_AND_DISK)
+            # Registered so the caller can release it. Nothing here knows when
+            # the fit that wanted the cache is finished, and a tournament fits
+            # this stage once per fold per grid point - without a release those
+            # blocks accumulate for the whole run. MEMORY_AND_DISK means Spark
+            # evicts rather than failing, so the symptom is memory pressure and
+            # GC time, not a crash.
+            _PERSISTED.append(dataset)
         return MaterializeCacheModel()
 
 
@@ -309,7 +335,18 @@ class OutlierIQRTruncator(Estimator, HasInputCols, HasOutputCols, _IQRParams,
         quantiles = casted.approxQuantile(cols, [0.25, 0.75], eps)
 
         lower, upper = [], []
-        for (q1, q3) in quantiles:
+        for col, qs in zip(cols, quantiles):
+            # approxQuantile returns [] for a column that is entirely null,
+            # so unpacking straight into (q1, q3) raises ValueError. An
+            # all-null column has no fences to learn; pass it through
+            # unclipped rather than failing the whole fit.
+            if len(qs) < 2:
+                print(f"  (OutlierIQRTruncator: {col} has no quantiles; "
+                      f"passing through unclipped)")
+                lower.append(float("-inf"))
+                upper.append(float("inf"))
+                continue
+            q1, q3 = qs[0], qs[1]
             iqr = q3 - q1
             lower.append(float(q1 - k * iqr))
             upper.append(float(q3 + k * iqr))
@@ -389,16 +426,25 @@ class TargetEncoderModel(Model, HasInputCols, HasOutputCols, _TargetEncoderParam
         return cache[src]
 
     def _lookup_frame(self, spark, src: str, dst: str, table: dict) -> DataFrame:
-        """Broadcast-join fallback for vocabularies too large to inline."""
+        """Broadcast-join fallback for vocabularies too large to inline.
+
+        Keyed on the session's own id rather than ``id(spark)``: CPython
+        reuses object ids after garbage collection, so a new session could
+        collide with a dead one's entry and hand back a DataFrame belonging to
+        a stopped context. The frame is registered for release along with the
+        MaterializeCache persists.
+        """
         cache = getattr(self, "_lookup_cache", None)
         if cache is None:
             cache = self._lookup_cache = {}
-        key = (id(spark), src, dst)
+        # applicationId is stable for a session and never reused across them.
+        key = (spark.sparkContext.applicationId, src, dst)
         if key not in cache:
             frame = spark.createDataFrame(
                 [(str(k), float(v)) for k, v in table.items()],
                 schema=f"__te_key string, {dst} double")
             cache[key] = frame.persist()
+            _PERSISTED.append(frame)
         return cache[key]
 
     def _transform(self, dataset: DataFrame) -> DataFrame:

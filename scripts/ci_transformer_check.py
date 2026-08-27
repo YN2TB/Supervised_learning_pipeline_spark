@@ -141,7 +141,37 @@ def main() -> int:
         check("PipelineModel.save/load produces identical output",
               fingerprint(model) == fingerprint(reloaded))
 
-        print("== 4. Leak policy ==")
+        print("== 4. Previously-unreachable paths ==")
+        # The broadcast-join fallback never fired in practice: the threshold is
+        # 20,000 categories and the largest real vocabulary is ~8,500. Forced
+        # here so the branch is actually exercised rather than assumed working.
+        from custom_transformers import TargetEncoderModel, release_caches
+        original = TargetEncoderModel.MAX_INLINE_CATEGORIES
+        try:
+            TargetEncoderModel.MAX_INLINE_CATEGORIES = 2
+            joined = te_model.transform(train).agg(
+                F.sum("origin_te").alias("s")).first()["s"]
+        finally:
+            TargetEncoderModel.MAX_INLINE_CATEGORIES = original
+        inline = te_model.transform(train).agg(
+            F.sum("origin_te").alias("s")).first()["s"]
+        check("broadcast-join path agrees with the inline map path",
+              abs(joined - inline) < 1e-6, f"join={joined:.4f} inline={inline:.4f}")
+
+        # An all-null column made approxQuantile return [], which used to raise
+        # ValueError on tuple unpacking and kill the whole fit.
+        nulls = train.withColumn("all_null", F.lit(None).cast("double"))
+        iqr_null = OutlierIQRTruncator(inputCols=["all_null"],
+                                       outputCols=["all_null_clip"]).fit(nulls)
+        n_rows = iqr_null.transform(nulls).count()
+        check("all-null column passes through instead of crashing the fit",
+              n_rows > 0, f"{n_rows} rows survived")
+
+        freed = release_caches()
+        check("MaterializeCache persists are releasable", freed >= 0,
+              f"released {freed}")
+
+        print("== 5. Leak policy ==")
         from flight_schema import LEAKY_COLUMNS
         attribution = {"AIR_SYSTEM_DELAY", "SECURITY_DELAY", "AIRLINE_DELAY",
                        "LATE_AIRCRAFT_DELAY", "WEATHER_DELAY"}

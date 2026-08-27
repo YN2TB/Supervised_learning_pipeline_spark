@@ -82,14 +82,26 @@ def load_runs(experiment: str) -> dict:
         if exp is None:
             raise RuntimeError(f"experiment {experiment!r} not found")
         rows = {}
-        for r in client.search_runs([exp.experiment_id], max_results=500):
+        # Ascending start_time so a re-run overwrites the older row, and
+        # FINISHED only. An arm interrupted between log_metrics and log_model
+        # leaves a run that HAS metrics but never completed; without both
+        # guards it can win the dict slot and put a stale number into the
+        # report - a plausible-looking number, with nothing marking it wrong.
+        for r in client.search_runs([exp.experiment_id], max_results=1000,
+                                    order_by=["attributes.start_time ASC"]):
             name = r.data.tags.get("mlflow.runName", "")
             if "__" not in name or not r.data.metrics:
                 continue          # skip autolog's nested CV children
+            if r.info.status != "FINISHED":
+                continue
+            sf = r.data.params.get("sample_fraction")
             rows[name] = dict(r.data.metrics,
                               model=r.data.params.get("model", name.split("__")[0]),
                               arm=r.data.params.get("arm", name.split("__")[1]),
-                              task=r.data.params.get("task", ""))
+                              task=r.data.params.get("task", ""),
+                              sample_fraction=float(sf) if sf is not None else None,
+                              test_rows=int(r.data.params["test_rows"])
+                              if r.data.params.get("test_rows") else None)
         if rows:
             print(f"loaded {len(rows)} runs from the MLflow store")
             return rows
@@ -217,12 +229,36 @@ def plot_residuals(runs: dict) -> None:
     try:
         from pyspark.ml import PipelineModel
         import custom_transformers  # noqa: F401
-        from mllib_pipeline import CURATED, REG_LABEL, SPLIT_SEED
+        from mllib_pipeline import CURATED, REG_LABEL, make_split
         from spark_session import build_spark
-        spark = build_spark("benchmark-residuals", cores="8")
+        # cores="*" is NOT cosmetic. randomSplit draws per input partition, and
+        # a parquet read produces one partition per core, so the same seed
+        # yields a DIFFERENT split at a different core count: 16 cores gives
+        # train=4,564,168 here, 8 gives 4,563,188, 4 gives 4,562,867. This ran
+        # at cores="8" while the tournament ran at "*", so the "held-out" rows
+        # plotted below were partly training rows. Match the training session.
+        spark = build_spark("benchmark-residuals", cores="*")
         try:
             df = spark.read.parquet(CURATED)
-            _, test = df.randomSplit([0.8, 0.2], seed=SPLIT_SEED)
+            frac = float(next((r.get("sample_fraction", 1.0)
+                               for r in runs.values()
+                               if r.get("sample_fraction") is not None), 1.0))
+            _, test = make_split(df, frac)
+
+            # Matching core counts is necessary but not sufficient - a different
+            # machine has a different core count. So verify against the row
+            # count the tournament actually recorded, and refuse to draw a
+            # residual plot over the wrong rows rather than drawing a wrong one.
+            expected = next((r.get("test_rows") for r in runs.values()
+                             if r.get("test_rows")), None)
+            if expected is not None:
+                actual = test.count()
+                if int(actual) != int(expected):
+                    print(f"  (residual plot skipped: reconstructed test set has "
+                          f"{actual:,} rows but the tournament used {expected:,}. "
+                          f"The split depends on read partitioning; rerun this on "
+                          f"the machine that trained, or retrain.)")
+                    return
             sample = test.sample(False, 0.02, seed=1)
             preds = (PipelineModel.load(model_path.replace("\\", "/"))
                      .transform(sample).select(REG_LABEL, "prediction").toPandas())

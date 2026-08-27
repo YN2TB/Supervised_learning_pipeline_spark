@@ -34,6 +34,7 @@ from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
 from pyspark.sql import functions as F
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import custom_transformers  # noqa: E402  (for release_caches between arms)
 from custom_transformers import (  # noqa: E402
     HaversineTransformer, MaterializeCache, OutlierIQRTruncator,
     SignedLog1pTransformer, TargetEncoder,
@@ -274,6 +275,21 @@ def model_specs(args):
     return grid
 
 
+def make_split(df, sample_fraction: float = 1.0):
+    """The single definition of the train/test split.
+
+    Anything that needs the *same* test rows as the tournament - the residual
+    plot, an ad-hoc error analysis - must call this rather than re-typing
+    ``randomSplit``. Re-deriving it elsewhere looks harmless and is not: the
+    optional sample runs BEFORE the split, so a caller that forgets it gets a
+    different partition of the data and silently mixes training rows into what
+    it calls the test set.
+    """
+    if sample_fraction < 1.0:
+        df = df.sample(False, sample_fraction, seed=SPLIT_SEED)
+    return df.randomSplit([0.8, 0.2], seed=SPLIT_SEED)
+
+
 def evaluators(task: str, label: str):
     if task == "regression":
         return {m: RegressionEvaluator(labelCol=label, predictionCol="prediction",
@@ -313,16 +329,24 @@ def completed_arms(experiment: str) -> dict:
         if exp is None:
             return {}
         done = {}
+        # Ascending start_time, so when an arm was run more than once - a
+        # resume after an interrupted run leaves an orphan behind - the newest
+        # row overwrites the older ones. Status is checked too: a run killed
+        # between log_metrics and log_model has metrics but never finished,
+        # and its saved model is truncated, so it must not count as complete.
         for r in client.search_runs([exp.experiment_id], max_results=1000,
                                     order_by=["attributes.start_time ASC"]):
             run_name = r.data.tags.get("mlflow.runName", "")
             if "__" not in run_name or not r.data.metrics:
                 continue
+            if r.info.status != "FINISHED":
+                continue
             done[run_name] = dict(
                 r.data.metrics,
                 model=r.data.params.get("model", run_name.split("__")[0]),
                 arm=r.data.params.get("arm", run_name.split("__")[-1]),
-                task=r.data.params.get("task", ""))
+                task=r.data.params.get("task", ""),
+                label=r.data.params.get("label", ""))
         return done
     except Exception as exc:  # noqa: BLE001 - never let bookkeeping stop a run
         print(f"  (could not read previous runs: {exc})")
@@ -379,16 +403,26 @@ def main() -> None:
 
     try:
         df = spark.read.parquet(CURATED)
-        if args.sample_fraction < 1.0:
-            df = df.sample(False, args.sample_fraction, seed=SPLIT_SEED)
 
-        # GLM shift, computed on the full frame before splitting so the offset
-        # is a fixed constant rather than a fitted quantity.
-        min_delay = df.agg(F.min(REG_LABEL)).first()[0]
+        # Split FIRST, then derive the GLM shift from the training half only.
+        # The offset is a single order statistic, and every metric here is
+        # invariant to a common shift of prediction and target, so taking it
+        # from the full frame could not have inflated a result - but B1.1
+        # claims nothing fitted ever sees test data, and min() over test is
+        # fitted. Cheaper to be consistent than to caveat it.
+        #
+        # randomSplit assigns rows from the input's existing partitioning, and
+        # adding a projection afterwards is a narrow transformation, so moving
+        # withColumn below the split leaves the split itself unchanged. That
+        # matters: the 14 completed arms are only comparable while the split
+        # is byte-identical, and scripts/check_split.py asserts it.
+        train, test = make_split(df, args.sample_fraction)
+
+        min_delay = train.agg(F.min(REG_LABEL)).first()[0]
         glm_offset = float(abs(min(min_delay, 0.0)) + 1.0)
-        df = df.withColumn("label_glm", F.col(REG_LABEL) + F.lit(glm_offset))
+        train = train.withColumn("label_glm", F.col(REG_LABEL) + F.lit(glm_offset))
+        test = test.withColumn("label_glm", F.col(REG_LABEL) + F.lit(glm_offset))
 
-        train, test = df.randomSplit([0.8, 0.2], seed=SPLIT_SEED)
         train = train.cache()
         test = test.cache()
         n_train, n_test = train.count(), test.count()
@@ -465,6 +499,7 @@ def main() -> None:
                             "pca_k": args.pca_k if use_pca else 0,
                             "tune_rows": n_tune, "train_rows": n_train,
                             "test_rows": n_test, "grid_size": len(spec["grid"]),
+                            "sample_fraction": args.sample_fraction,
                         })
 
                         cv_model = cv.fit(tune)
@@ -538,6 +573,12 @@ def main() -> None:
                     checkpoint(results, failures)
                     continue
 
+                # Release what MaterializeCache persisted for this arm's fits.
+                # train/test/tune are cached separately and are untouched.
+                freed = custom_transformers.release_caches()
+                if freed:
+                    print(f"  {'':<5} released {freed} cached frame(s)")
+
                 checkpoint(results, failures)
 
         with open(os.path.join(BENCH_DIR, "tournament_results.json"), "w") as fh:
@@ -575,6 +616,24 @@ def register_winner(results: dict, args) -> None:
                                           archive_existing_versions=True)
     client.set_model_version_tag(REGISTERED_MODEL, mv.version, "task", "regression")
     print(f"registered {REGISTERED_MODEL} v{mv.version} -> Production")
+
+    # Record WHICH label the winner was trained on, into the serving contract.
+    # The GLM arms train on label_glm, which is ARRIVAL_DELAY + glm_offset, so
+    # their predictions come back on the shifted scale. Without this, a GLM
+    # winner would make inference.py emit every prediction glm_offset minutes
+    # too high - silently, because a shifted delay is still a plausible delay.
+    won_label = runs[0].data.params.get("label", REG_LABEL)
+    meta_path = os.path.join(MODEL_DIR, "input_schema.json")
+    try:
+        with open(meta_path) as fh:
+            meta = json.load(fh)
+        meta["label"] = won_label
+        meta["winner"] = best_name
+        with open(meta_path, "w") as fh:
+            json.dump(meta, fh, indent=2)
+        print(f"serving contract: label={won_label}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"could not update the serving contract: {exc}")
 
     # Also drop a plain PipelineModel on disk for the streaming job, which
     # should not need the tracking store to be reachable.
