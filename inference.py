@@ -31,7 +31,9 @@ import sys
 
 from pyspark.ml import PipelineModel
 from pyspark.sql import functions as F
-from pyspark.sql.types import StructType
+from pyspark.sql.types import (
+    DoubleType, IntegerType, LongType, StringType, StructField, StructType,
+)
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import custom_transformers  # noqa: F401,E402  (registers classes for deserialization)
@@ -50,8 +52,21 @@ def load_serving_schema() -> tuple[StructType, float]:
         raise SystemExit(f"missing {meta_path} - run mllib_pipeline.py first")
     with open(meta_path) as fh:
         meta = json.load(fh)
-    ddl = ", ".join(f"`{f['name']}` {f['type']}" for f in meta["fields"])
-    return StructType.fromDDL(ddl), float(meta.get("glm_offset", 0.0))
+    # Built field by field rather than parsed from a DDL string:
+    # StructType.fromDDL does not exist in PySpark 3.5 (it arrives in 4.0),
+    # and the private _parse_datatype_string needs a live JVM. mllib_pipeline
+    # writes these with DataType.simpleString(), so the names are stable.
+    simple = {"int": IntegerType, "bigint": LongType, "double": DoubleType,
+              "string": StringType}
+    fields = []
+    for f in meta["fields"]:
+        kind = simple.get(f["type"])
+        if kind is None:
+            raise SystemExit(
+                f"unsupported type {f['type']!r} for column {f['name']!r} in "
+                f"{meta_path}; add it to the map in load_serving_schema()")
+        fields.append(StructField(f["name"], kind(), True))
+    return StructType(fields), float(meta.get("glm_offset", 0.0))
 
 
 def main() -> None:
