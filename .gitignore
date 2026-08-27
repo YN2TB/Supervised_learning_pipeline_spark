@@ -27,6 +27,9 @@ checkpoints/
 # the real tournament results.
 docs/benchmarks/*
 
+# --- Editor ---
+docs/.obsidian/
+
 # --- Python ---
 __pycache__/
 *.pyc
