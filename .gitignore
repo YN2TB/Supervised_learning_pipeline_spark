@@ -28,7 +28,9 @@ checkpoints/
 docs/benchmarks/*
 
 # --- Editor ---
-docs/.obsidian/
+# Obsidian vault config, so REPORT.md can be read rendered. Anywhere in the
+# tree: there is one at the repo root and one in docs/.
+.obsidian/
 
 # --- Python ---
 __pycache__/
