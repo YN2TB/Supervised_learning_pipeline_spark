@@ -702,12 +702,31 @@ Forest (regressor + classifier) and GBT (regressor + classifier).
 `CrossValidator(numFolds=5, parallelism=4)` evaluates grid points concurrently
 across executor slots rather than serially.
 
-**Tuning strategy.** Hyperparameters are searched on a stratified sample
-(`--tune-fraction`, default 10%) and the winning configuration is then refitted on
-the *full* training set. Seven model families × 5 folds × grid over 4.5M rows is
-many hours, and the *ranking* of hyperparameters stabilises well before the metric
-value does. The sample fraction is a CLI flag, so a full-data search is one
-argument away.
+**Tuning strategy.** Hyperparameters are searched on a stratified sample and the
+winning configuration is then refitted on the *full* training set. The reported
+tournament searched on **91,144 rows (2.0% of the 4,564,168-row training split)**
+and refitted every winner on all of it; the metrics in the tables below are
+therefore full-data numbers, not sample numbers. Seven model families × 5 folds ×
+grid over 4.5M rows is many hours, and the *ranking* of hyperparameters stabilises
+well before the metric value does. The fraction is a CLI flag (`--tune-fraction`,
+default 10%), so a full-data search is one argument away.
+
+**Every winner landed on a grid boundary**, which is worth stating rather than
+hiding. The linear models all chose the smallest regularisation offered
+(`regParam` 0.01, `elasticNetParam` 0.0, and the GLM the largest at 1.0); the tree
+models mostly chose the largest capacity offered (`maxDepth` 10 for RF, 6 for GBT,
+`numTrees` 80, `maxBins` 64). Two arms are the exceptions and go the other way:
+`random_forest_regressor__nopca` preferred 40 trees to 80, and
+`gbt_classifier__nopca` preferred depth 4 to depth 6 — on un-rotated features both
+have enough signal per split that the extra capacity only added variance.
+
+The dominant direction is what 4.5M training rows predict: the variance term is
+small at this sample size, so penalising coefficients mostly adds bias, and the
+trees have not yet reached the depth where they overfit. It does mean the grids
+bracket the optimum from one side only — a wider search would likely gain the
+tree arms a little and leave the linear winner where it is, since `regParam` is
+already pinned to its floor. The cost table below shows why widening was not worth
+the compute: the arms differ by far more than a grid step.
 
 ### Results
 
