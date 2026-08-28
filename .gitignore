@@ -31,6 +31,11 @@ docs/benchmarks/*.log
 # tree: there is one at the repo root and one in docs/.
 .obsidian/
 
+# VS Code workspace settings. Pins the interpreter to the 3.11 venv so Pylance
+# resolves pyspark and the Run button cannot launch system 3.14 against
+# mlflow.db (see CLAUDE.md the interpreter trap).
+.vscode/
+
 # --- Python ---
 __pycache__/
 *.pyc
