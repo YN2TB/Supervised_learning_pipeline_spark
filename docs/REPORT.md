@@ -215,9 +215,9 @@ The denominator equals $\operatorname{tr}(A^\top A) = \sum_j \operatorname{Var}(
 so with standardised inputs it is just $p$.
 
 **Measured, and the result is unflattering to PCA here.** Ten components retain
-only **28.1%** of the variance of the 80-dimensional feature space, and the cost
-shows up directly in the models: linear regression scores $R^2 = 0.930$ on the
-full feature set against $0.682$ through `PCA(k=10)`.
+only **28.5%** of the variance of the 80-dimensional feature space, and the cost
+shows up directly in the models: linear regression scores $R^2 = 0.9289$ on the
+full feature set against $0.7034$ through `PCA(k=10)`.
 
 That is not a bug, it is what PCA does to this kind of feature space. Most of the
 dimensions are one-hot indicators, which are close to mutually orthogonal and

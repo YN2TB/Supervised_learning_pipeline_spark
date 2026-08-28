@@ -1,0 +1,1547 @@
+<title>Inside the Delay Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<style>
+/* ---------------------------------------------------------------------------
+   Tokens. Light palette lives on bare :root so the un-stamped default works.
+   Dark is redefined twice: once for system-dark, once for an explicit toggle.
+   No component below picks a colour from anywhere but these tokens.
+--------------------------------------------------------------------------- */
+:root {
+  --paper:      #F1F4F4;
+  --surface:    #FAFCFC;
+  --surface-2:  #E7EDED;
+  --ink:        #141B1E;
+  --ink-soft:   #3D4B4F;
+  --muted:      #64757A;
+  --rule:       #C9D5D6;
+  --rule-soft:  #DCE5E5;
+  --signal:     #0B6E77;
+  --signal-ink: #075158;
+  --signal-wash:#DCEDEE;
+  --trap:       #97510C;
+  --trap-wash:  #F6E7D6;
+  --good:       #2C6E49;
+  --good-wash:  #DDEBE2;
+  --code-bg:    #E9EFEF;
+  --shadow:     0 1px 2px rgba(20,27,30,.06), 0 8px 24px -12px rgba(20,27,30,.18);
+
+  --f-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+  --f-body:    "Atkinson Hyperlegible", "Segoe UI", system-ui, sans-serif;
+  --f-mono:    "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+
+  --measure: 67ch;
+  --rail: 16rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:      #0E1417;
+    --surface:    #151D21;
+    --surface-2:  #1D272B;
+    --ink:        #E3EBEC;
+    --ink-soft:   #BCCACC;
+    --muted:      #8B9DA1;
+    --rule:       #2C393D;
+    --rule-soft:  #212D31;
+    --signal:     #4FBAC2;
+    --signal-ink: #8FD8DD;
+    --signal-wash:#122A2D;
+    --trap:       #D9973F;
+    --trap-wash:  #2E2214;
+    --good:       #5FBF8C;
+    --good-wash:  #12271C;
+    --code-bg:    #1A2428;
+    --shadow:     0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"] {
+  --paper:      #0E1417;
+  --surface:    #151D21;
+  --surface-2:  #1D272B;
+  --ink:        #E3EBEC;
+  --ink-soft:   #BCCACC;
+  --muted:      #8B9DA1;
+  --rule:       #2C393D;
+  --rule-soft:  #212D31;
+  --signal:     #4FBAC2;
+  --signal-ink: #8FD8DD;
+  --signal-wash:#122A2D;
+  --trap:       #D9973F;
+  --trap-wash:  #2E2214;
+  --good:       #5FBF8C;
+  --good-wash:  #12271C;
+  --code-bg:    #1A2428;
+  --shadow:     0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.7);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 17px;
+  line-height: 1.66;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- shell ------------------------------------------------------------- */
+.shell { display: grid; grid-template-columns: var(--rail) minmax(0, 1fr); gap: 0; }
+
+.rail {
+  position: sticky; top: 0; align-self: start;
+  height: 100vh; overflow-y: auto;
+  padding: 2.4rem 1.1rem 2.4rem 1.9rem;
+  border-right: 1px solid var(--rule);
+  background: var(--surface);
+  display: flex; flex-direction: column; gap: .35rem;
+}
+.rail .brand {
+  font-family: var(--f-display);
+  font-weight: 600; font-size: 1.02rem; line-height: 1.25;
+  margin-bottom: 1.3rem; color: var(--ink);
+}
+.rail .brand span { display: block; font-family: var(--f-body); font-size: .7rem;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  font-weight: 400; margin-top: .4rem; }
+.rail a {
+  display: grid; grid-template-columns: 1.5rem 1fr; gap: .3rem;
+  text-decoration: none; color: var(--ink-soft);
+  font-size: .845rem; line-height: 1.4; padding: .35rem .45rem;
+  border-radius: 3px; border-left: 2px solid transparent;
+}
+.rail a:hover { background: var(--surface-2); color: var(--ink); }
+.rail a.on { color: var(--signal); border-left-color: var(--signal); background: var(--signal-wash); }
+.rail a .n { font-family: var(--f-mono); font-size: .74rem; color: var(--muted);
+  font-variant-numeric: tabular-nums; padding-top: .12rem; }
+.rail a.on .n { color: var(--signal); }
+
+.main { padding: 0 0 8rem; min-width: 0; }
+.col { max-width: var(--measure); margin: 0 auto; padding: 0 1.6rem; }
+.wide { max-width: 60rem; margin: 0 auto; padding: 0 1.6rem; }
+
+/* --- masthead ---------------------------------------------------------- */
+.masthead { padding: 5rem 0 3rem; border-bottom: 1px solid var(--rule); margin-bottom: 3.5rem; }
+.masthead .eyebrow {
+  font-family: var(--f-mono); font-size: .73rem; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--signal); margin-bottom: 1.1rem;
+}
+.masthead h1 {
+  font-family: var(--f-display); font-weight: 600;
+  font-size: clamp(2.3rem, 5.2vw, 3.5rem); line-height: 1.06;
+  margin: 0 0 1.3rem; letter-spacing: -.018em; text-wrap: balance;
+}
+.masthead .standfirst { font-size: 1.1rem; color: var(--ink-soft); margin: 0; }
+
+/* --- typography -------------------------------------------------------- */
+h2 {
+  font-family: var(--f-display); font-weight: 600;
+  font-size: clamp(1.6rem, 3vw, 2.05rem); line-height: 1.15;
+  letter-spacing: -.012em; margin: 0 0 .35rem; text-wrap: balance;
+}
+h3 {
+  font-family: var(--f-display); font-weight: 600; font-size: 1.24rem;
+  line-height: 1.25; margin: 2.6rem 0 .7rem; text-wrap: balance;
+}
+h4 {
+  font-family: var(--f-body); font-weight: 700; font-size: .95rem;
+  margin: 1.9rem 0 .5rem; letter-spacing: .005em;
+}
+p { margin: 0 0 1.15rem; }
+a { color: var(--signal); }
+
+section { padding-top: 3.2rem; margin-bottom: 4.2rem; }
+section > .col > .kicker {
+  font-family: var(--f-mono); font-size: .73rem; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--muted); margin-bottom: .8rem;
+  display: flex; align-items: baseline; gap: .6rem;
+}
+section > .col > .kicker b { color: var(--signal); font-weight: 600;
+  font-variant-numeric: tabular-nums; }
+.deck { font-size: 1.04rem; color: var(--ink-soft); margin: 0 0 1.9rem; }
+
+code {
+  font-family: var(--f-mono); font-size: .855em;
+  background: var(--code-bg); padding: .1em .34em; border-radius: 3px;
+  color: var(--ink);
+}
+pre {
+  font-family: var(--f-mono); font-size: .82rem; line-height: 1.62;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--rule); border-radius: 5px;
+  padding: 1rem 1.1rem; overflow-x: auto; margin: 0 0 1.3rem;
+}
+pre code { background: none; padding: 0; font-size: inherit; }
+pre .c { color: var(--muted); }
+pre .k { color: var(--signal); }
+
+ul, ol { margin: 0 0 1.2rem; padding-left: 1.3rem; }
+li { margin-bottom: .5rem; }
+li::marker { color: var(--muted); }
+strong { font-weight: 700; }
+
+.lead-in { font-weight: 700; color: var(--ink); }
+
+/* --- callouts ---------------------------------------------------------- */
+.note {
+  border-left: 3px solid var(--signal); background: var(--signal-wash);
+  padding: 1rem 1.2rem; border-radius: 0 4px 4px 0; margin: 0 0 1.4rem;
+  font-size: .95rem;
+}
+.note.trap { border-left-color: var(--trap); background: var(--trap-wash); }
+.note.good { border-left-color: var(--good); background: var(--good-wash); }
+.note p:last-child { margin-bottom: 0; }
+.note .tag {
+  display: block; font-family: var(--f-mono); font-size: .69rem;
+  letter-spacing: .13em; text-transform: uppercase; margin-bottom: .45rem;
+  color: var(--signal);
+}
+.note.trap .tag { color: var(--trap); }
+.note.good .tag { color: var(--good); }
+
+/* --- figures ----------------------------------------------------------- */
+figure { margin: 2rem 0; }
+figure svg { display: block; width: 100%; max-width: 100%; height: auto;
+  color: var(--ink); }
+.d-sig    { stroke: var(--signal); }
+.d-sig-f  { fill:   var(--signal); }
+.d-trap   { stroke: var(--trap); }
+.d-trap-f { fill:   var(--trap); }
+.d-sig-f, .d-trap-f { stroke: none; }
+figcaption { font-size: .87rem; color: var(--muted); margin-top: .8rem;
+  line-height: 1.55; }
+
+/* --- tables ------------------------------------------------------------ */
+.table-wrap { overflow-x: auto; margin: 0 0 1.5rem; }
+table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+th, td { text-align: left; padding: .52rem .8rem; border-bottom: 1px solid var(--rule-soft); }
+th { font-size: .71rem; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--muted); font-weight: 700; border-bottom-color: var(--rule); }
+td.num, th.num { text-align: right; font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums; }
+tr.win td { background: var(--good-wash); }
+tr.win td:first-child { font-weight: 700; }
+
+/* --- interactive panels ------------------------------------------------ */
+.demo {
+  background: var(--surface); border: 1px solid var(--rule);
+  border-radius: 6px; padding: 1.4rem 1.5rem 1.5rem; margin: 2rem 0;
+  box-shadow: var(--shadow);
+}
+.demo-head { display: flex; align-items: baseline; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap; margin-bottom: .3rem; }
+.demo-head h4 { margin: 0; font-size: 1rem; }
+.demo-head .try {
+  font-family: var(--f-mono); font-size: .66rem; letter-spacing: .13em;
+  text-transform: uppercase; color: var(--signal);
+  border: 1px solid var(--signal); border-radius: 99px; padding: .12rem .55rem;
+  white-space: nowrap;
+}
+.demo .why { font-size: .9rem; color: var(--muted); margin: 0 0 1.1rem; }
+
+button {
+  font-family: var(--f-body); font-size: .84rem; font-weight: 700;
+  color: var(--ink); background: var(--surface-2);
+  border: 1px solid var(--rule); border-radius: 4px;
+  padding: .42rem .85rem; cursor: pointer; line-height: 1.3;
+}
+button:hover:not(:disabled) { border-color: var(--signal); color: var(--signal); }
+button:disabled { opacity: .42; cursor: not-allowed; }
+button.primary { background: var(--signal); border-color: var(--signal); color: var(--surface); }
+:root[data-theme="dark"] button.primary,
+:root:not([data-theme="light"]) button.primary { color: var(--paper); }
+@media (prefers-color-scheme: light) { button.primary { color: #FFF; } }
+button.primary:hover:not(:disabled) { background: var(--signal-ink); border-color: var(--signal-ink); color: #FFF; }
+button.on { background: var(--signal); border-color: var(--signal); color: #FFF; }
+:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+
+.btn-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+
+.slider-row { display: grid; grid-template-columns: auto 1fr auto; gap: .9rem;
+  align-items: center; margin-bottom: 1rem; }
+.slider-row label { font-size: .84rem; color: var(--muted); white-space: nowrap; }
+.slider-row output { font-family: var(--f-mono); font-size: .88rem;
+  font-variant-numeric: tabular-nums; color: var(--signal); font-weight: 600;
+  min-width: 3.6rem; text-align: right; }
+input[type=range] { width: 100%; accent-color: var(--signal); }
+
+.readout {
+  font-family: var(--f-mono); font-size: .8rem; line-height: 1.75;
+  background: var(--code-bg); border-radius: 4px; padding: .85rem 1rem;
+  overflow-x: auto; white-space: pre; color: var(--ink-soft);
+}
+.readout .hi { color: var(--signal); font-weight: 600; }
+.readout .dim { color: var(--muted); }
+.readout .warn { color: var(--trap); font-weight: 600; }
+
+.stat-row { display: flex; flex-wrap: wrap; gap: 1.8rem; margin: 1.1rem 0 0; }
+.stat { display: flex; flex-direction: column; gap: .1rem; }
+.stat .v { font-family: var(--f-mono); font-size: 1.32rem; font-weight: 600;
+  color: var(--signal); font-variant-numeric: tabular-nums; line-height: 1.15; }
+.stat .l { font-size: .74rem; color: var(--muted); letter-spacing: .04em; }
+
+/* partition boxes */
+.parts { display: grid; gap: .55rem; margin-bottom: 1rem; }
+.part {
+  border: 1px solid var(--rule); border-radius: 4px; background: var(--paper);
+  padding: .5rem .6rem; display: flex; align-items: center; gap: .5rem;
+  flex-wrap: wrap; min-height: 2.6rem;
+}
+.part .plabel { font-family: var(--f-mono); font-size: .7rem; color: var(--muted);
+  width: 4.6rem; flex-shrink: 0; }
+.chip {
+  font-family: var(--f-mono); font-size: .7rem; padding: .16rem .45rem;
+  border-radius: 3px; background: var(--signal-wash); color: var(--signal-ink);
+  border: 1px solid var(--signal); transition: transform .38s ease, opacity .38s ease;
+}
+.chip.moved { background: var(--trap-wash); color: var(--trap); border-color: var(--trap); }
+:root[data-theme="dark"] .chip, :root:not([data-theme="light"]) .chip { color: var(--signal); }
+@media (prefers-color-scheme: light) { .chip { color: var(--signal-ink); } }
+
+/* vector cells */
+.vec { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: .9rem; }
+.cell {
+  width: 2.55rem; height: 1.6rem; border-radius: 2px;
+  font-family: var(--f-mono); font-size: .62rem;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--rule); background: var(--paper); color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.cell.nz { background: var(--signal-wash); border-color: var(--signal); color: var(--signal); font-weight: 600; }
+.cell.dense { background: var(--trap-wash); border-color: var(--trap); color: var(--trap); }
+
+/* bar chart */
+.bars { display: flex; align-items: flex-end; gap: 5px; height: 8.5rem;
+  border-bottom: 1px solid var(--rule); padding-bottom: 0; margin-bottom: .4rem; }
+.bar { flex: 1; background: var(--signal); border-radius: 2px 2px 0 0; min-height: 2px;
+  position: relative; opacity: .85; }
+.bar:hover { opacity: 1; }
+.bar-labels { display: flex; gap: 5px; }
+.bar-labels span { flex: 1; text-align: center; font-family: var(--f-mono);
+  font-size: .62rem; color: var(--muted); }
+
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1.2rem; }
+
+hr.rule { border: 0; border-top: 1px solid var(--rule); margin: 3.4rem 0; }
+
+.faq { border-top: 1px solid var(--rule); }
+.faq details { border-bottom: 1px solid var(--rule); padding: 0; }
+.faq summary {
+  cursor: pointer; padding: 1.05rem .2rem; font-weight: 700; font-size: 1rem;
+  list-style: none; display: flex; gap: .8rem; align-items: baseline;
+}
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::before { content: "+"; color: var(--signal); font-family: var(--f-mono);
+  font-weight: 400; flex-shrink: 0; }
+.faq details[open] summary::before { content: "\2212"; }
+.faq details[open] summary { color: var(--signal); }
+.faq .body { padding: 0 .2rem 1.3rem 1.85rem; font-size: .96rem; color: var(--ink-soft); }
+.faq .body p:last-child { margin-bottom: 0; }
+
+footer { border-top: 1px solid var(--rule); margin-top: 4rem; padding-top: 1.8rem;
+  font-size: .84rem; color: var(--muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+@media (max-width: 900px) {
+  .shell { grid-template-columns: 1fr; }
+  .rail { position: static; height: auto; border-right: 0;
+    border-bottom: 1px solid var(--rule); flex-direction: row;
+    flex-wrap: wrap; gap: .3rem; padding: 1.1rem 1.2rem; }
+  .rail .brand { width: 100%; margin-bottom: .6rem; }
+  .rail a { grid-template-columns: auto auto; font-size: .78rem; padding: .25rem .5rem;
+    border-left: 0; border-bottom: 2px solid transparent; }
+  .rail a.on { border-left: 0; border-bottom-color: var(--signal); }
+  .masthead { padding-top: 2.6rem; }
+}
+</style>
+
+<div class="shell">
+<nav class="rail" aria-label="Contents">
+  <div class="brand">Inside the Delay Pipeline<span>Field manual</span></div>
+  <a href="#p1"><span class="n">1</span><span>What this project actually does</span></a>
+  <a href="#p2"><span class="n">2</span><span>How Spark works at all</span></a>
+  <a href="#p3"><span class="n">3</span><span>Getting the data honest</span></a>
+  <a href="#p4"><span class="n">4</span><span>Transformers, and why some are Estimators</span></a>
+  <a href="#p5"><span class="n">5</span><span>Turning columns into one vector</span></a>
+  <a href="#p6"><span class="n">6</span><span>The tournament</span></a>
+  <a href="#p7"><span class="n">7</span><span>Serving the model</span></a>
+  <a href="#p8"><span class="n">8</span><span>Running it yourself</span></a>
+  <a href="#p9"><span class="n">9</span><span>Questions you will get asked</span></a>
+</nav>
+
+<main class="main">
+
+<header class="masthead">
+  <div class="col">
+    <div class="eyebrow">PySpark MLlib · 5.7M flights · read in order</div>
+    <h1>Inside the Delay Pipeline</h1>
+    <p class="standfirst">A walk through every moving part of this codebase &mdash; what
+    Spark is doing underneath, what each formula is for, and why the pipeline is
+    built the way it is. Written to be read start to finish, with the parts you
+    can poke at marked <em>try it</em>.</p>
+  </div>
+</header>
+
+<!-- ==================================================================== -->
+<section id="p1">
+  <div class="col">
+    <div class="kicker"><b>Part 1</b> <span>Orientation</span></div>
+    <h2>What this project actually does</h2>
+    <p class="deck">One sentence, then the numbers behind it.</p>
+
+    <p>You have a table of every commercial flight in the United States in 2015 &mdash;
+    <strong>5,819,079 rows</strong> of them. Each row records a flight: which airline,
+    which airports, when it was scheduled, when it actually pushed back from the gate,
+    and how many minutes late it eventually landed.</p>
+
+    <p>The project builds a machine that answers one question:</p>
+
+    <div class="note">
+      <span class="tag">The question</span>
+      <p>A plane has just lifted off. Given only what we know <em>at that
+      instant</em> &mdash; the airline, the route, the weather-free schedule facts, and
+      how late it left the gate &mdash; how many minutes late will it land?</p>
+    </div>
+
+    <p>That "at that instant" is the whole game, and Part&nbsp;3 explains why. A model
+    that peeks at what happened <em>after</em> takeoff can score almost perfectly and be
+    completely worthless.</p>
+
+    <p>There are really two questions, and the code answers both. The <strong>regression</strong>
+    task predicts the number of minutes. The <strong>classification</strong> task predicts a
+    yes/no: will this land more than 30 minutes late?</p>
+
+    <div class="stat-row">
+      <div class="stat"><span class="v">5,704,000</span><span class="l">rows after cleaning</span></div>
+      <div class="stat"><span class="v">0.929</span><span class="l">R&sup2; &mdash; best regressor</span></div>
+      <div class="stat"><span class="v">7.2 min</span><span class="l">average error</span></div>
+      <div class="stat"><span class="v">14</span><span class="l">models trained</span></div>
+    </div>
+
+    <h3>What the files are</h3>
+    <p>Six Python files carry the whole project. Read them in this order and each one
+    only depends on the ones above it.</p>
+
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>File</th><th>What it does</th><th>Run it?</th></tr></thead>
+      <tbody>
+        <tr><td><code>spark_session.py</code></td><td>Starts Spark with the right settings. Everything imports this.</td><td>No &mdash; imported</td></tr>
+        <tr><td><code>flight_schema.py</code></td><td>Declares the column types, and the list of columns that would leak the answer.</td><td>No &mdash; imported</td></tr>
+        <tr><td><code>data_prep.py</code></td><td>Reads the raw CSV, repairs it, joins in airport coordinates, writes Parquet.</td><td>Once</td></tr>
+        <tr><td><code>custom_transformers.py</code></td><td>The five feature-engineering steps you wrote yourself.</td><td>No &mdash; imported</td></tr>
+        <tr><td><code>mllib_pipeline.py</code></td><td>Builds the pipeline, runs the tournament, records everything to MLflow.</td><td>The main event</td></tr>
+        <tr><td><code>inference.py</code></td><td>Loads the saved model and scores a live stream of new flights.</td><td>The demo</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p><code>benchmark_results.py</code> sits off to the side: it reads results back out of
+    MLflow and draws the charts. It never trains anything.</p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ==================================================================== -->
+<section id="p2">
+  <div class="col">
+    <div class="kicker"><b>Part 2</b> <span>The engine</span></div>
+    <h2>How Spark works at all</h2>
+    <p class="deck">Four ideas. Everything confusing about Spark comes from not
+    having one of them.</p>
+
+    <h3>Idea 1 &mdash; the data is cut into pieces</h3>
+    <p>A pandas DataFrame is one table in one process's memory. A Spark DataFrame is
+    a table that has been <strong>chopped into partitions</strong>, and the partitions are
+    handed out to workers that each hold only their slice.</p>
+    <p>Nobody ever holds all 5.7 million rows. When you write <code>df.filter(...)</code>,
+    that filter is shipped to every worker and each one applies it to the rows it
+    happens to be holding.</p>
+  </div>
+
+  <div class="wide">
+    <figure>
+      <svg viewBox="0 0 720 250" role="img" aria-label="A driver process sends the same instructions to four executors, each holding a different slice of the rows.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <rect x="20" y="96" width="150" height="58" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <text x="95" y="120" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Driver</text>
+        <text x="95" y="138" text-anchor="middle" font-size="11" fill="currentColor" opacity=".65">your python</text>
+
+        <line x1="172" y1="125" x2="248" y2="45"  stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)" opacity=".7"/>
+        <line x1="172" y1="125" x2="248" y2="98"  stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)" opacity=".7"/>
+        <line x1="172" y1="125" x2="248" y2="152" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)" opacity=".7"/>
+        <line x1="172" y1="125" x2="248" y2="205" stroke="currentColor" stroke-width="1.2" marker-end="url(#ar)" opacity=".7"/>
+        <text x="196" y="112" font-size="10" fill="currentColor" opacity=".65">the plan</text>
+
+        <g font-size="12">
+          <rect x="252" y="24"  width="200" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="266" y="50" fill="currentColor">Executor 1</text>
+          <rect x="252" y="77"  width="200" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="266" y="103" fill="currentColor">Executor 2</text>
+          <rect x="252" y="130" width="200" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="266" y="156" fill="currentColor">Executor 3</text>
+          <rect x="252" y="183" width="200" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1.3"/>
+          <text x="266" y="209" fill="currentColor">Executor 4</text>
+        </g>
+
+        <g font-size="11" font-family="monospace" class="d-sig-f">
+          <rect x="470" y="24"  width="230" height="42" rx="4" fill="none" class="d-sig" stroke-width="1.3"/>
+          <text x="484" y="50">rows 1 – 1,426,000</text>
+          <rect x="470" y="77"  width="230" height="42" rx="4" fill="none" class="d-sig" stroke-width="1.3"/>
+          <text x="484" y="103">rows 1,426,001 – 2,852,000</text>
+          <rect x="470" y="130" width="230" height="42" rx="4" fill="none" class="d-sig" stroke-width="1.3"/>
+          <text x="484" y="156">rows 2,852,001 – 4,278,000</text>
+          <rect x="470" y="183" width="230" height="42" rx="4" fill="none" class="d-sig" stroke-width="1.3"/>
+          <text x="484" y="209">rows 4,278,001 – 5,704,000</text>
+        </g>
+        <line x1="454" y1="45"  x2="466" y2="45"  stroke="currentColor" stroke-width="1" opacity=".45"/>
+        <line x1="454" y1="98"  x2="466" y2="98"  stroke="currentColor" stroke-width="1" opacity=".45"/>
+        <line x1="454" y1="151" x2="466" y2="151" stroke="currentColor" stroke-width="1" opacity=".45"/>
+        <line x1="454" y1="204" x2="466" y2="204" stroke="currentColor" stroke-width="1" opacity=".45"/>
+      </svg>
+      <figcaption>One driver holds the plan; the executors hold the rows. On your
+      machine <code>local[*]</code> means the "executors" are just threads &mdash; 16 of them,
+      one per core &mdash; but the split is real and everything below follows from it.</figcaption>
+    </figure>
+  </div>
+
+  <div class="col">
+    <h3>Idea 2 &mdash; nothing runs until you ask for an answer</h3>
+    <p>This is the one that trips everybody. When you write a chain of Spark operations,
+    <strong>nothing happens</strong>. Spark just writes down what you asked for. Only when
+    you demand an actual result &mdash; a count, a saved file, a row printed &mdash; does it
+    look at the whole recipe, optimise it, and run it.</p>
+    <p>Operations that just get recorded are called <em>transformations</em>. Operations that
+    force the work to happen are called <em>actions</em>.</p>
+
+    <div class="demo">
+      <div class="demo-head"><h4>Build a chain, then run it</h4><span class="try">try it</span></div>
+      <p class="why">Add steps and watch the clock stay at zero. Spark is only taking notes.</p>
+      <div class="btn-row">
+        <button data-op="filter">.filter(delay &gt; 0)</button>
+        <button data-op="select">.select(cols)</button>
+        <button data-op="join">.join(airports)</button>
+        <button data-op="group">.groupBy(airline)</button>
+        <button class="primary" data-op="run">.count() &larr; action</button>
+        <button data-op="reset">reset</button>
+      </div>
+      <div class="readout" id="dag-out"></div>
+    </div>
+
+    <div class="note">
+      <span class="tag">Why you should care</span>
+      <p>Laziness is why Spark can be fast. Because it sees the <em>whole</em> chain before
+      running anything, it can rearrange it &mdash; push your filter down to the file read
+      so it never loads the rows you were going to throw away. It is also why a bug can
+      sit silently in your code for twenty lines and only explode at the <code>.count()</code>.</p>
+    </div>
+
+    <h3>Idea 3 &mdash; some operations make the data move, and those are the slow ones</h3>
+    <p>Adding a column is cheap: every worker can do it to its own rows without talking
+    to anyone. Spark calls this <strong>narrow</strong>.</p>
+    <p>Grouping is expensive. To compute the average delay per airline, every row for
+    Delta has to end up on the <em>same</em> worker &mdash; so rows fly across the network to be
+    regrouped. This is a <strong>shuffle</strong>, and it is almost always the reason a Spark job
+    is slow.</p>
+
+    <div class="demo">
+      <div class="demo-head"><h4>Narrow versus wide</h4><span class="try">try it</span></div>
+      <p class="why">Same three partitions, two different operations. Watch which one
+      makes rows change home.</p>
+      <div class="btn-row">
+        <button class="on" data-shuf="narrow">withColumn &mdash; narrow</button>
+        <button data-shuf="wide">groupBy &mdash; wide</button>
+      </div>
+      <div class="parts" id="shuf-parts"></div>
+      <div class="readout" id="shuf-out"></div>
+    </div>
+
+    <p>You can see this decision in your own config. <code>spark_session.py</code> sets
+    <code>spark.sql.shuffle.partitions</code>, which is simply <em>how many pieces to cut the data
+    into when a shuffle happens</em>. Spark's default is 200. On 5.7M rows and 16 cores that
+    makes lots of tiny slices with more overhead than work, so the project sets it lower.</p>
+
+    <h3>Idea 4 &mdash; caching, and its price</h3>
+    <p>Because Spark is lazy, asking for two different answers from the same chain
+    computes that chain <em>twice</em>. <code>.cache()</code> tells Spark to keep the result in
+    memory after the first pass.</p>
+    <p>This project measured it rather than assuming, and found something worth knowing:</p>
+
+    <div class="note trap">
+      <span class="tag">Measured, not guessed</span>
+      <p>Caching made <code>fit</code> faster &mdash; 51&nbsp;s down to 35&nbsp;s. But it made
+      <code>transform</code> <strong>23&times; slower</strong> &mdash; 0.28&nbsp;s up to 6.5&nbsp;s &mdash; because
+      every cross-validation fold pays that cost on every pass. That is why
+      <code>MaterializeCache</code> is an Estimator whose Model does nothing: the caching helps
+      during fitting and then gets out of the way.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ==================================================================== -->
+<section id="p3">
+  <div class="col">
+    <div class="kicker"><b>Part 3</b> <span>data_prep.py</span></div>
+    <h2>Getting the data honest</h2>
+    <p class="deck">Two problems in the raw file, one of which will silently destroy
+    your results if you miss it.</p>
+
+    <h3>The leak &mdash; the single most important idea in the project</h3>
+    <p>The raw table has columns like <code>ARRIVAL_TIME</code>, <code>AIR_TIME</code>, and five
+    columns that break the delay down by cause: <code>AIRLINE_DELAY</code>,
+    <code>WEATHER_DELAY</code>, and so on.</p>
+    <p>Those five columns <strong>add up to the answer</strong>. Feed them to a model and it
+    scores R&sup2; &asymp; 1.0, because you handed it the target written in five pieces.
+    It has learned addition, not delay.</p>
+    <p>The fix is to fix a moment in time and refuse anything from after it. This project
+    picks <strong>wheels-off</strong> &mdash; the instant the plane leaves the ground.</p>
+  </div>
+
+  <div class="wide">
+    <figure>
+      <svg viewBox="0 0 720 210" role="img" aria-label="A flight timeline with a vertical prediction boundary at wheels-off; features to the left are allowed, everything to the right is a leak.">
+        <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/></marker></defs>
+        <line x1="40" y1="112" x2="690" y2="112" stroke="currentColor" stroke-width="1.5"/>
+        <g font-size="11" fill="currentColor">
+          <circle cx="80"  cy="112" r="4" fill="currentColor"/>
+          <circle cx="200" cy="112" r="4" fill="currentColor"/>
+          <circle cx="320" cy="112" r="4" fill="currentColor"/>
+          <circle cx="500" cy="112" r="4" fill="currentColor"/>
+          <circle cx="620" cy="112" r="4" fill="currentColor"/>
+          <text x="80"  y="134" text-anchor="middle">scheduled</text>
+          <text x="200" y="134" text-anchor="middle">pushback</text>
+          <text x="320" y="134" text-anchor="middle">wheels off</text>
+          <text x="500" y="134" text-anchor="middle">wheels on</text>
+          <text x="620" y="134" text-anchor="middle">at gate</text>
+        </g>
+
+        <line x1="320" y1="26" x2="320" y2="176" class="d-trap" stroke-width="2" stroke-dasharray="5 4"/>
+        <text x="330" y="36" font-size="12" font-weight="600" class="d-trap-f">prediction point</text>
+
+        <rect x="44" y="52" width="268" height="40" rx="4" fill="none" class="d-sig" stroke-width="1.3"/>
+        <text x="178" y="70" text-anchor="middle" font-size="11.5" font-weight="600" class="d-sig-f">allowed as features</text>
+        <text x="178" y="85" text-anchor="middle" font-size="10.5" class="d-sig-f">airline · route · schedule · DEPARTURE_DELAY · TAXI_OUT</text>
+
+        <rect x="330" y="52" width="360" height="40" rx="4" fill="none" class="d-trap" stroke-width="1.3"/>
+        <text x="510" y="70" text-anchor="middle" font-size="11.5" font-weight="600" class="d-trap-f">dropped &mdash; these are leaks</text>
+        <text x="510" y="85" text-anchor="middle" font-size="10.5" class="d-trap-f">ARRIVAL_TIME · AIR_TIME · ELAPSED_TIME · the five *_DELAY columns</text>
+
+        <text x="510" y="163" text-anchor="middle" font-size="11.5" fill="currentColor" opacity=".7">the thing we are predicting lives over here</text>
+        <line x1="320" y1="152" x2="612" y2="152" stroke="currentColor" stroke-width="1" opacity=".45" marker-end="url(#ar2)"/>
+      </svg>
+      <figcaption>The leak boundary. It is enforced in code, not just documented:
+      <code>flight_schema.LEAKY_COLUMNS</code> lists the banned columns and
+      <code>data_prep.py</code> asserts they are gone.</figcaption>
+    </figure>
+  </div>
+
+  <div class="col">
+    <div class="note good">
+      <span class="tag">How to know it worked</span>
+      <p>At the wheels-off horizon, expect <strong>R&sup2; between 0.85 and 0.93</strong>.
+      Near 0.99 means a leak got back in. Near 0.48 means a feature transform is
+      destroying <code>DEPARTURE_DELAY</code>. Your best model scores <strong>0.9289</strong>,
+      right where honest work lands.</p>
+    </div>
+
+    <h3>The October problem</h3>
+    <p>Every month in the file identifies airports by their letter code &mdash; <code>SEA</code>,
+    <code>MCO</code>. Except October, which uses numeric Department of Transportation ids
+    &mdash; <code>14747</code>, <code>13204</code>.</p>
+    <p>Join that against the airports table and October matches nothing. You lose
+    <strong>486,165 rows</strong>, and Spark tells you nothing, because a join that finds no
+    match is not an error.</p>
+    <p><code>scripts/build_airport_code_map.py</code> recovers the mapping from the data
+    itself: it finds the same flight numbers in other months, takes a majority vote on
+    which letter code that route uses, and then <em>verifies</em> each guess geometrically
+    &mdash; the recovered coordinates must reproduce the row's own published distance.</p>
+
+    <div class="note trap">
+      <span class="tag">The subtle bit</span>
+      <p>Verification had to be done <strong>per code</strong>, not pooled. Pooled, the median
+      error looked excellent &mdash; 0.96 miles &mdash; while five individual mappings were badly
+      wrong. An average can hide the failures it is averaging.</p>
+    </div>
+
+    <h3>CSV in, Parquet out</h3>
+    <p>The last thing <code>data_prep.py</code> does is write the cleaned table as
+    <strong>Parquet</strong> instead of CSV. This matters more than it sounds.</p>
+    <p>CSV is text: to read one column, Spark parses every character of every row. Parquet
+    is columnar and typed &mdash; ask for three columns and it physically reads only those
+    three off the disk. The tournament re-reads this data dozens of times, so the
+    conversion pays for itself many times over.</p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ==================================================================== -->
+<section id="p4">
+  <div class="col">
+    <div class="kicker"><b>Part 4</b> <span>custom_transformers.py</span></div>
+    <h2>Transformers, and why some are Estimators</h2>
+    <p class="deck">The distinction that keeps the whole project honest.</p>
+
+    <p>MLlib has exactly two kinds of pipeline step.</p>
+    <p>A <strong>Transformer</strong> knows everything it needs in advance. "Take the log of this
+    column" needs no knowledge of your data &mdash; it just does the arithmetic.</p>
+    <p>An <strong>Estimator</strong> has to <em>learn</em> something first. "Clip outliers" needs to know
+    where the outliers are, and that depends on the data. So an Estimator has a
+    <code>fit()</code> that looks at the training data and produces a <strong>Model</strong> &mdash; a
+    Transformer with the learned numbers frozen inside it.</p>
+  </div>
+
+  <div class="wide">
+    <figure>
+      <svg viewBox="0 0 720 216" role="img" aria-label="An Estimator's fit method reads training data and produces a Model with frozen parameters; that Model transforms both training and test data without ever re-reading the test set.">
+        <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/></marker></defs>
+        <rect x="24" y="20" width="132" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="90" y="46" text-anchor="middle" font-size="12.5" fill="currentColor">training rows</text>
+
+        <line x1="158" y1="41" x2="212" y2="41" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar3)"/>
+        <text x="185" y="31" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">fit</text>
+
+        <rect x="214" y="20" width="150" height="42" rx="4" fill="none" class="d-sig" stroke-width="1.6"/>
+        <text x="289" y="46" text-anchor="middle" font-size="12.5" font-weight="600" class="d-sig-f">OutlierIQRTruncator</text>
+        <text x="289" y="12" text-anchor="middle" font-size="10" class="d-sig-f">Estimator</text>
+
+        <line x1="366" y1="41" x2="420" y2="41" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar3)"/>
+        <text x="393" y="31" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">makes</text>
+
+        <rect x="422" y="14" width="240" height="56" rx="4" fill="none" class="d-sig" stroke-width="1.6"/>
+        <text x="542" y="36" text-anchor="middle" font-size="12.5" font-weight="600" class="d-sig-f">…TruncatorModel</text>
+        <text x="542" y="54" text-anchor="middle" font-size="10.5" font-family="monospace" class="d-sig-f">fences frozen at [−23, 25]</text>
+
+        <line x1="542" y1="74" x2="542" y2="112" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar3)"/>
+
+        <rect x="24" y="130" width="132" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="90" y="156" text-anchor="middle" font-size="12.5" fill="currentColor">test rows</text>
+        <line x1="158" y1="151" x2="418" y2="151" stroke="currentColor" stroke-width="1.3" marker-end="url(#ar3)"/>
+        <text x="288" y="141" text-anchor="middle" font-size="10" fill="currentColor" opacity=".7">transform &mdash; using the same frozen fences</text>
+
+        <rect x="422" y="130" width="240" height="42" rx="4" fill="none" stroke="currentColor" stroke-width="1.4"/>
+        <text x="542" y="156" text-anchor="middle" font-size="12.5" fill="currentColor">clipped test rows</text>
+
+        <text x="360" y="200" text-anchor="middle" font-size="11.5" class="d-trap-f">the test set never influences the fences — that is the whole point</text>
+      </svg>
+      <figcaption>Why the split matters. A plain Transformer that recomputed its own
+      quantiles would recompute them <em>on the test set too</em> &mdash; letting test data shape
+      the transform. That is a leak, and it is invisible unless you look for it.</figcaption>
+    </figure>
+  </div>
+
+  <div class="col">
+    <div class="note trap">
+      <span class="tag">Worth defending out loud</span>
+      <p>The assignment brief says to subclass <code>Transformer</code>. Your
+      <code>OutlierIQRTruncator</code> and <code>TargetEncoder</code> are Estimator/Model pairs
+      instead. That is deliberate: implemented as bare Transformers they would refit on
+      test data and on <em>every streaming micro-batch</em>. The report explains the
+      choice &mdash; turning a spec ambiguity into an argument you can win.</p>
+    </div>
+
+    <h3>The five custom steps</h3>
+
+    <h4>1. HaversineTransformer &mdash; how far apart are these airports?</h4>
+    <p>The table gives coordinates, not distance. The great-circle distance between two
+    points on a sphere is:</p>
+    <p style="text-align:center; font-family:var(--f-mono); font-size:.92rem;">
+      d = 2R · arcsin( &radic;( sin&sup2;(&Delta;&phi;/2) + cos&phi;&#8321; · cos&phi;&#8322; · sin&sup2;(&Delta;&lambda;/2) ) )</p>
+    <p>with &phi; latitude, &lambda; longitude, R the Earth's radius. The
+    <code>arcsin</code>-of-a-square-root form is used rather than the textbook cosine
+    formula because it stays numerically accurate for short flights, where the plain
+    version loses precision.</p>
+    <p>Two more features come out of it: <strong>route detour</strong> (published miles ÷
+    great-circle miles &mdash; how far from a straight line the airways force you) and
+    <strong>schedule speed</strong> (miles ÷ scheduled hours &mdash; a leg scheduled at an
+    implausibly high speed has no slack, so any delay goes straight through to arrival).</p>
+
+    <div class="note">
+      <span class="tag">This is the Arrow part</span>
+      <p>This step is a <code>@pandas_udf</code>. Normally, running Python on Spark data means
+      converting each row into a Python object, one at a time. A <code>pandas_udf</code> ships
+      <em>whole batches</em> across in Apache Arrow's binary format &mdash; 20,000 rows at a time
+      here &mdash; so the trigonometry runs once over a NumPy array at C speed instead of
+      5.7 million times through the interpreter.</p>
+    </div>
+
+    <h4>2. OutlierIQRTruncator &mdash; tame the extreme values</h4>
+    <p>A few flights left 15 hours late. Those rows drag a linear model badly. The classic
+    fix is Tukey's fences: take the middle 50% of the data, and treat anything more than
+    1.5 of those widths outside it as an outlier.</p>
+    <p style="text-align:center; font-family:var(--f-mono); font-size:.92rem;">
+      IQR = Q&#8323; &minus; Q&#8321; &nbsp;&nbsp;&nbsp; fences = [ Q&#8321; &minus; 1.5·IQR , Q&#8323; + 1.5·IQR ]</p>
+    <p>Fitted on your training data, that gives <code>DEPARTURE_DELAY</code> fences of
+    <strong>[&minus;23, 25] minutes</strong> and <code>TAXI_OUT</code> fences of
+    <strong>[&minus;1, 31] minutes</strong>. Values outside get pulled to the fence rather
+    than deleted &mdash; the row still has useful information in its other columns.</p>
+    <p>Computing an exact quantile of 4.5 million distributed values would need a full
+    sort. Spark uses <code>approxQuantile</code> instead, which streams a compact summary and
+    guarantees the answer is within a set relative error &mdash; 0.001 here.</p>
+
+    <h4>3. SignedLog1pTransformer &mdash; squash the long tail</h4>
+    <p>Distance is heavily right-skewed: many short hops, a few very long hauls. Taking a
+    log compresses that. But <code>log1p</code> breaks on negative numbers, and delays are
+    legitimately negative when a flight is early. So the signed form:</p>
+    <p style="text-align:center; font-family:var(--f-mono); font-size:.92rem;">
+      f(x) = sign(x) · log(1 + |x|)</p>
+    <p>which is exactly <code>log1p</code> for positive values and stays smooth and increasing
+    across zero.</p>
+
+    <h4>4. TargetEncoder &mdash; turn 4,627 routes into one number</h4>
+    <p>One-hot encoding <code>ROUTE</code> would add 4,627 columns. Instead, replace each route
+    with the average delay observed on that route. The danger is rare categories: a route
+    flown three times, all of them disastrous, would get an extreme value from almost no
+    evidence.</p>
+    <p>So the average is <em>smoothed</em> toward the global average:</p>
+    <p style="text-align:center; font-family:var(--f-mono); font-size:.95rem;">
+      encoded = ( &Sigma;y + m · prior ) / ( n + m )</p>
+    <p>where <code>n</code> is how many flights that category has, <code>prior</code> is the global
+    mean delay, and <code>m</code> is how much evidence you demand before you trust the
+    category's own average. Your fitted model uses <code>m = 20</code> and a prior of
+    <strong>4.417 minutes</strong>.</p>
+
+    <div class="demo">
+      <div class="demo-head"><h4>Smoothing, with your model's real numbers</h4><span class="try">try it</span></div>
+      <p class="why">Drag the sliders. Watch a category with little evidence get pulled
+      toward the 4.417-minute prior, while a well-evidenced one keeps its own value.</p>
+      <div class="slider-row">
+        <label for="te-n">flights on this route (n)</label>
+        <input type="range" id="te-n" min="1" max="400" value="4">
+        <output id="te-n-out">4</output>
+      </div>
+      <div class="slider-row">
+        <label for="te-y">its own mean delay</label>
+        <input type="range" id="te-y" min="-20" max="60" value="42">
+        <output id="te-y-out">42.0</output>
+      </div>
+      <div class="slider-row">
+        <label for="te-m">smoothing (m)</label>
+        <input type="range" id="te-m" min="0" max="200" value="20">
+        <output id="te-m-out">20</output>
+      </div>
+      <div class="readout" id="te-out"></div>
+    </div>
+
+    <p>The real fitted extremes are worth seeing: the route <code>LGA&ndash;LIT</code> encodes to
+    <strong>+56.2 minutes</strong> and <code>ANC&ndash;KOA</code> to <strong>&minus;19.4</strong>.
+    Those survived smoothing, which means they are backed by real volume &mdash; not noise.</p>
+
+    <h4>5. MaterializeCache &mdash; the one that does nothing on purpose</h4>
+    <p>Covered in Part 2. It caches during <code>fit</code> and its Model is a deliberate no-op,
+    so the 23&times; transform penalty never reaches cross-validation or streaming.</p>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ==================================================================== -->
+<section id="p5">
+  <div class="col">
+    <div class="kicker"><b>Part 5</b> <span>mllib_pipeline.py</span></div>
+    <h2>Turning columns into one vector</h2>
+    <p class="deck">MLlib models take exactly one input: a column of vectors. Six
+    stages get you there.</p>
+
+    <p>After the custom steps you still have ordinary columns &mdash; some numbers, some text.
+    Every MLlib algorithm wants a single column called <code>features</code> where each row
+    holds one vector. The rest of the pipeline is about building that.</p>
+  </div>
+
+  <div class="wide">
+    <figure>
+      <svg viewBox="0 0 720 132" role="img" aria-label="The thirteen pipeline stages in order, from outlier clipping through to the estimator.">
+        <g font-size="9.5" fill="currentColor">
+          <rect x="6"   y="42" width="70" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="1.1"/>
+          <text x="41" y="57" text-anchor="middle">Outlier</text><text x="41" y="68" text-anchor="middle">IQR</text>
+          <rect x="82"  y="42" width="70" height="34" rx="3" fill="none" class="d-sig" stroke-width="1.4"/>
+          <text x="117" y="57" text-anchor="middle" class="d-sig-f">Haversine</text><text x="117" y="68" text-anchor="middle" class="d-sig-f">arrow udf</text>
+          <rect x="158" y="42" width="70" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="1.1"/>
+          <text x="193" y="57" text-anchor="middle">SignedLog</text><text x="193" y="68" text-anchor="middle">1p</text>
+          <rect x="234" y="42" width="58" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="1.1"/>
+          <text x="263" y="63" text-anchor="middle">Imputer</text>
+          <rect x="298" y="42" width="70" height="34" rx="3" fill="none" class="d-sig" stroke-width="1.4"/>
+          <text x="333" y="57" text-anchor="middle" class="d-sig-f">Target</text><text x="333" y="68" text-anchor="middle" class="d-sig-f">Encoder</text>
+          <rect x="374" y="42" width="86" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="1.1"/>
+          <text x="417" y="57" text-anchor="middle">StringIndexer</text><text x="417" y="68" text-anchor="middle">+ OneHot</text>
+          <rect x="466" y="42" width="70" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="1.1"/>
+          <text x="501" y="57" text-anchor="middle">Vector</text><text x="501" y="68" text-anchor="middle">Assembler</text>
+          <rect x="542" y="42" width="66" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="1.1"/>
+          <text x="575" y="57" text-anchor="middle">Standard</text><text x="575" y="68" text-anchor="middle">Scaler</text>
+          <rect x="614" y="42" width="56" height="34" rx="3" fill="none" stroke="currentColor" stroke-width="1.1"/>
+          <text x="642" y="57" text-anchor="middle">Variance</text><text x="642" y="68" text-anchor="middle">Selector</text>
+          <rect x="676" y="42" width="40" height="34" rx="3" fill="none" class="d-trap" stroke-width="1.4"/>
+          <text x="696" y="63" text-anchor="middle" class="d-trap-f">model</text>
+        </g>
+        <g stroke="currentColor" stroke-width="1" opacity=".5">
+          <line x1="76" y1="59" x2="80" y2="59"/><line x1="152" y1="59" x2="156" y2="59"/>
+          <line x1="228" y1="59" x2="232" y2="59"/><line x1="292" y1="59" x2="296" y2="59"/>
+          <line x1="368" y1="59" x2="372" y2="59"/><line x1="460" y1="59" x2="464" y2="59"/>
+          <line x1="536" y1="59" x2="540" y2="59"/><line x1="608" y1="59" x2="612" y2="59"/>
+          <line x1="670" y1="59" x2="674" y2="59"/>
+        </g>
+        <text x="117" y="24" text-anchor="middle" font-size="9.5" class="d-sig-f">your code</text>
+        <text x="333" y="24" text-anchor="middle" font-size="9.5" class="d-sig-f">your code</text>
+        <text x="360" y="106" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".7">one object · saves as one file · reloads for streaming with every learned number intact</text>
+        <text x="642" y="24" text-anchor="middle" font-size="9.5" fill="currentColor" opacity=".7">PCA slots in here</text>
+      </svg>
+      <figcaption>The full chain, in execution order. The PCA arms insert one more stage
+      between the variance selector and the model; the no-PCA arms skip it.</figcaption>
+    </figure>
+  </div>
+
+  <div class="col">
+    <h3>One-hot encoding, and why the vector is mostly zeros</h3>
+    <p><code>StringIndexer</code> turns "Delta" into a number, and <code>OneHotEncoder</code> turns
+    that number into a vector that is all zeros except a single 1. Do that for airline,
+    month, weekday and departure hour and most of your feature vector is zeros. Spark
+    stores it <em>sparsely</em> &mdash; only the positions that are non-zero.</p>
+
+    <h3>Scaling &mdash; and the decision that looks like a bug</h3>
+    <p>Features arrive on wildly different scales: distance in the thousands, delay in the
+    tens. A linear model's regularisation penalty would then punish them unequally.
+    Standardisation fixes that:</p>
+    <p style="text-align:center; font-family:var(--f-mono); font-size:.92rem;">
+      z = (x &minus; &mu;) / &sigma;</p>
+    <p>But your code sets <code>withMean=False</code> &mdash; it divides by &sigma; and skips
+    subtracting &mu;. That looks like an oversight. It is the single most defensible line
+    in the file.</p>
+
+    <div class="demo">
+      <div class="demo-head"><h4>What subtracting the mean does to a sparse vector</h4><span class="try">try it</span></div>
+      <p class="why">Every zero minus a non-zero mean becomes non-zero. The sparse vector
+      stops being sparse.</p>
+      <div class="btn-row">
+        <button class="on" data-scale="off">withMean=False &mdash; your setting</button>
+        <button data-scale="on">withMean=True</button>
+      </div>
+      <div class="vec" id="vec-cells"></div>
+      <div class="readout" id="vec-out"></div>
+    </div>
+
+    <h3>PCA &mdash; required, and it costs you</h3>
+    <p>Principal Component Analysis finds the directions along which the data varies most,
+    and keeps only the top <code>k</code>. Here <code>k = 10</code>.</p>
+    <p>Doing it on distributed data without ever collecting the matrix to one machine is
+    the clever part: each worker computes the covariance contribution of its own rows,
+    those get summed up a tree, and only the small resulting matrix goes to the driver for
+    the actual eigen-decomposition.</p>
+
+    <div class="demo">
+      <div class="demo-head"><h4>What your 10 components actually captured</h4><span class="try">hover</span></div>
+      <p class="why">Real values from <code>docs/benchmarks/pca_explained_variance.json</code>.</p>
+      <div class="bars" id="pca-bars"></div>
+      <div class="bar-labels" id="pca-labels"></div>
+      <div class="readout" id="pca-out" style="margin-top:.9rem"></div>
+    </div>
+
+    <div class="note trap">
+      <span class="tag">The honest result</span>
+      <p>Ten components retain only <strong>28.5%</strong> of the variance, and the cost shows
+      up in the score: linear regression falls from R&sup2; <strong>0.9289 without PCA to
+      0.7034 with it</strong>. PCA is required by the brief, so the project runs
+      <em>both</em> arms for every model &mdash; and the no-PCA arm is also the only one that can
+      give you interpretable feature importances, because PCA's components are blends
+      with no real-world meaning.</p>
+    </div>
+
+    <div class="note">
+      <span class="tag">Why VarianceThresholdSelector sits just before PCA</span>
+      <p>It is not tidying. One-hot encoding with <code>handleInvalid="keep"</code> creates
+      slots that are always zero. A constant column has zero variance, which makes the
+      covariance matrix singular, and Spark's PCA dies with
+      <code>NotConvergedException</code>. Dropping zero-variance columns first is what stops
+      that.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ==================================================================== -->
+<section id="p6">
+  <div class="col">
+    <div class="kicker"><b>Part 6</b> <span>The results</span></div>
+    <h2>The tournament</h2>
+    <p class="deck">Seven model families, two arms each, one identical split.</p>
+
+    <h3>Cross-validation</h3>
+    <p>To choose hyperparameters you need to score them without touching the test set. So
+    the training data is split into 5 folds: train on 4, score on the 1 held out, rotate,
+    average. <code>CrossValidator(numFolds=5, parallelism=4)</code> runs four of those
+    fits at once.</p>
+    <p>Searching a grid over 4.5 million rows takes many hours, so the search runs on a
+    <strong>91,144-row sample</strong> and only the <em>winner</em> is refitted on the full
+    4,564,168 training rows. The ranking of hyperparameters settles long before the metric
+    value does.</p>
+
+    <h3>What the scores mean</h3>
+    <div class="grid-2">
+      <div>
+        <h4>RMSE</h4>
+        <p style="font-size:.93rem">Typical error in minutes, with big misses punished
+        extra. Lower is better.</p>
+      </div>
+      <div>
+        <h4>MAE</h4>
+        <p style="font-size:.93rem">Average error in minutes, all misses weighted the
+        same. The most human-readable number.</p>
+      </div>
+      <div>
+        <h4>R&sup2;</h4>
+        <p style="font-size:.93rem">Share of the variation explained. 1.0 is perfect,
+        0.0 is no better than always guessing the average.</p>
+      </div>
+      <div>
+        <h4>AUC-ROC</h4>
+        <p style="font-size:.93rem">For the yes/no task: the chance the model ranks a
+        genuinely late flight above an on-time one.</p>
+      </div>
+    </div>
+
+    <h3>Regression results</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>model</th><th>arm</th><th class="num">RMSE</th><th class="num">MAE</th><th class="num">R&sup2;</th><th class="num">train s</th></tr></thead>
+      <tbody>
+        <tr class="win"><td>linear_regression</td><td>nopca</td><td class="num">10.5171</td><td class="num">7.1939</td><td class="num">0.9289</td><td class="num">1111</td></tr>
+        <tr><td>gbt_regressor</td><td>nopca</td><td class="num">12.8530</td><td class="num">7.5262</td><td class="num">0.8938</td><td class="num">2325</td></tr>
+        <tr><td>random_forest_regressor</td><td>nopca</td><td class="num">14.0499</td><td class="num">8.3463</td><td class="num">0.8731</td><td class="num">1881</td></tr>
+        <tr><td>random_forest_regressor</td><td>pca</td><td class="num">14.9809</td><td class="num">10.0465</td><td class="num">0.8558</td><td class="num">1731</td></tr>
+        <tr><td>gbt_regressor</td><td>pca</td><td class="num">15.2086</td><td class="num">10.0520</td><td class="num">0.8513</td><td class="num">2262</td></tr>
+        <tr><td>linear_regression</td><td>pca</td><td class="num">21.4813</td><td class="num">14.3725</td><td class="num">0.7034</td><td class="num">1142</td></tr>
+        <tr><td>glm_poisson_log</td><td>pca</td><td class="num">27.0180</td><td class="num">12.5177</td><td class="num">0.5309</td><td class="num">2149</td></tr>
+        <tr><td>glm_poisson_log</td><td>nopca</td><td class="num">40.1434</td><td class="num">11.4800</td><td class="num">&minus;0.0357</td><td class="num">2073</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    <h3>Why the simplest model won</h3>
+    <p>Plain linear regression beat two gradient-boosted ensembles, which surprises
+    people. It should not.</p>
+    <p>Arrival delay is <em>nearly a straight line</em> in departure delay &mdash; the correlation
+    is <strong>0.947</strong>. A plane that leaves 40 minutes late lands roughly 40 minutes
+    late. Linear regression models a straight line exactly. Trees have to approximate one
+    with a staircase of splits, and never quite land on it.</p>
+    <p>The trees also cost twice the wall-clock time to lose.</p>
+
+    <div class="note trap">
+      <span class="tag">The bug this nearly hid</span>
+      <p>Because that relationship is so nearly linear, anything that distorts
+      <code>DEPARTURE_DELAY</code> destroys the model. Measured on this data: clipped gives
+      R&sup2; 0.390, log-transformed 0.409, <strong>raw 0.937</strong>. That is why the raw
+      column is passed through untouched <em>alongside</em> its clipped version. It looks
+      untidy and it is worth 0.5 of R&sup2;.</p>
+    </div>
+
+    <h3>Classification results</h3>
+    <div class="table-wrap">
+    <table>
+      <thead><tr><th>model</th><th>arm</th><th class="num">AUC-ROC</th><th class="num">AUC-PR</th><th class="num">F1</th><th class="num">train s</th></tr></thead>
+      <tbody>
+        <tr><td>gbt_classifier</td><td>nopca</td><td class="num">0.9817</td><td class="num">0.9384</td><td class="num">0.9716</td><td class="num">2336</td></tr>
+        <tr class="win"><td>linear_svc</td><td>nopca</td><td class="num">0.9806</td><td class="num">0.9338</td><td class="num">0.9675</td><td class="num">959</td></tr>
+        <tr><td>random_forest_classifier</td><td>nopca</td><td class="num">0.9792</td><td class="num">0.9277</td><td class="num">0.9683</td><td class="num">2084</td></tr>
+        <tr><td>gbt_classifier</td><td>pca</td><td class="num">0.9699</td><td class="num">0.8801</td><td class="num">0.9546</td><td class="num">1533</td></tr>
+        <tr><td>linear_svc</td><td>pca</td><td class="num">0.9657</td><td class="num">0.8769</td><td class="num">0.9547</td><td class="num">803</td></tr>
+        <tr><td>random_forest_classifier</td><td>pca</td><td class="num">0.9635</td><td class="num">0.8709</td><td class="num">0.9523</td><td class="num">2074</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Effectively a three-way tie on accuracy &mdash; so the tiebreak is cost.
+    <code>LinearSVC</code> reaches the same place in <strong>959 seconds instead of 2,336</strong>.
+    When models are indistinguishable on quality, the cheap one wins.</p>
+
+    <h3>The GLM is bad, and that is a finding</h3>
+    <p>The Poisson GLM scores R&sup2; &minus;0.036 without PCA &mdash; worse than guessing the
+    average. This is not a bug. A log link assumes the response is <em>multiplied</em> by its
+    predictors, but arrival delay is <em>added</em> to departure delay. The link function does
+    not match the physics. Naming that correctly is worth more than quietly dropping the
+    arm.</p>
+
+    <h3>MLflow &mdash; the lab notebook</h3>
+    <p>Every arm logs its parameters, metrics, timings and the fitted model to MLflow,
+    stored in <code>mlflow.db</code>. The winner is registered by name and promoted through
+    Staging to <strong>Production</strong>, which is what lets <code>inference.py</code> ask for
+    "whatever is in production" rather than a file path.</p>
+
+    <div class="note trap">
+      <span class="tag">The trap that has already bitten once</span>
+      <p>Your system Python 3.14 carries MLflow 3.8.1. One command from it silently
+      migrates <code>mlflow.db</code> to a schema the pinned 2.19.0 then refuses to open, and
+      all 14 runs become unreadable. Always <code>source ./env.sh</code> first &mdash; even for a
+      one-line query.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ==================================================================== -->
+<section id="p7">
+  <div class="col">
+    <div class="kicker"><b>Part 7</b> <span>inference.py</span></div>
+    <h2>Serving the model</h2>
+    <p class="deck">Proving the saved pipeline works on data it has never seen, with
+    no retraining.</p>
+
+    <p>The whole 13-stage pipeline saves as a <em>single object</em>, with every learned
+    number inside it &mdash; the IQR fences, the 4,627 route averages, the scaler's standard
+    deviations, the regression coefficients. <code>inference.py</code> loads that one object
+    and applies it to a stream of arriving flights.</p>
+
+    <p>Structured Streaming here is the same DataFrame API you already know. You call
+    <code>spark.readStream</code> instead of <code>spark.read</code>, and Spark re-runs your query
+    every time new files land, tracking what it has already processed in a checkpoint.</p>
+
+    <h4>Two things that are easy to get wrong</h4>
+    <p><span class="lead-in">A stream cannot guess its schema.</span> A batch read can peek
+    at the file; a stream has no file yet. So the training run publishes
+    <code>models/input_schema.json</code> and the stream reads its column layout from
+    there.</p>
+    <p><span class="lead-in">Custom classes must be importable when the model loads.</span>
+    The saved metadata refers to your transformers by name, so Python must be able to find
+    <code>custom_transformers.py</code> &mdash; which is why <code>submit_pipeline.sh</code> passes
+    <code>--py-files custom_transformers.py</code>.</p>
+
+    <div class="note">
+      <span class="tag">A subtlety worth knowing about</span>
+      <p>If a GLM ever wins the tournament, its predictions come back shifted, because a
+      log link needs a strictly positive target and the label was shifted by 88 minutes to
+      make it so. <code>inference.py</code> reads the winning label from the schema file and
+      undoes the shift. Without that, every served number would be 88 minutes too high
+      &mdash; and still look like a plausible delay, so nothing would alert you.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ==================================================================== -->
+<section id="p8">
+  <div class="col">
+    <div class="kicker"><b>Part 8</b> <span>Hands on keyboard</span></div>
+    <h2>Running it yourself</h2>
+    <p class="deck">In order. The first line is not optional.</p>
+
+    <h4>Every session starts here</h4>
+<pre><code><span class="c"># Git Bash</span>
+source ./env.sh
+<span class="c"># PowerShell</span>
+. .\env.ps1</code></pre>
+    <p>This pins the project's own JDK 17, the Hadoop native libraries, and the Python
+    3.11 interpreter. Your machine's defaults are all wrong for Spark and fail in
+    confusing ways &mdash; a Java version Spark cannot use, a Python that crashes on import,
+    a missing DLL that only breaks when you save a model.</p>
+
+    <h4>Check the runtime is sane</h4>
+<pre><code>python scripts/smoke_test.py        <span class="c"># must print 5/5</span>
+python scripts/test_transformers.py <span class="c"># must print 8/8</span></code></pre>
+    <p>If <code>smoke_test</code> passes, Java, Arrow and model-saving all work. If it fails,
+    stop &mdash; nothing downstream will work either.</p>
+
+    <h4>A fast end-to-end run</h4>
+<pre><code>python mllib_pipeline.py --sample-fraction 0.01 --tune-fraction 0.5 \
+    --folds 2 --models linear_regression</code></pre>
+    <p>A few minutes, and it exercises the entire path. Do this before any long run.
+    Bugs that only appear at small scale are real ones &mdash; the PCA singularity was found
+    exactly this way.</p>
+
+    <h4>The streaming demo &mdash; two terminals</h4>
+<pre><code><span class="c"># terminal 1</span>
+source ./env.sh && python inference.py
+<span class="c"># terminal 2</span>
+source ./env.sh && python scripts/make_stream_events.py --batches 5</code></pre>
+
+    <h4>Redraw the charts without retraining</h4>
+<pre><code>python benchmark_results.py</code></pre>
+
+    <div class="note trap">
+      <span class="tag">Two things that will waste an afternoon</span>
+      <p><strong>Never type bare <code>python</code>.</strong> Without <code>env.sh</code> you get
+      system Python 3.14, and if it touches <code>mlflow.db</code> your results become
+      unreadable.</p>
+      <p><strong>Long runs go in the background</strong>, writing to <code>.spark-tmp/*.log</code>.
+      Piping through <code>grep</code> buffers the output and the log looks empty &mdash;
+      <code>tail -c</code> the raw file instead.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="rule">
+
+<!-- ==================================================================== -->
+<section id="p9">
+  <div class="col">
+    <div class="kicker"><b>Part 9</b> <span>Defence</span></div>
+    <h2>Questions you will get asked</h2>
+    <p class="deck">The nine most likely, with answers you can say out loud.</p>
+
+    <div class="faq">
+      <details>
+        <summary>Why is your R&sup2; only 0.93 and not higher?</summary>
+        <div class="body"><p>Because it is honest. The model predicts at wheels-off, using
+        nothing that happens after takeoff. Anything above about 0.95 at this horizon
+        means a leak got back in &mdash; the five <code>*_DELAY</code> columns literally sum to
+        the target, so including them gives R&sup2; near 1.0 and a model that cannot
+        predict anything.</p></div>
+      </details>
+      <details>
+        <summary>Why does simple linear regression beat gradient boosting?</summary>
+        <div class="body"><p>Because the underlying relationship really is close to
+        linear &mdash; arrival delay correlates 0.947 with departure delay. Linear regression
+        represents a straight line exactly; trees approximate one with a staircase and
+        take twice as long to do it worse. The right model is the one that matches the
+        shape of the data, not the most powerful one available.</p></div>
+      </details>
+      <details>
+        <summary>You were told to subclass Transformer. Why are two of yours Estimators?</summary>
+        <div class="body"><p>Because a Transformer that computes its own quantiles would
+        recompute them on the test set and on every streaming micro-batch, which is a data
+        leak. Fences and category means are <em>learned parameters</em>, so they belong in a
+        Model produced by <code>fit()</code>. The report documents the deviation and the
+        reasoning.</p></div>
+      </details>
+      <details>
+        <summary>Why is withMean=False? Isn't standardisation supposed to centre the data?</summary>
+        <div class="body"><p>Normally yes. But after one-hot encoding this feature vector
+        is mostly zeros and stored sparsely. Subtracting a non-zero mean turns every zero
+        into a non-zero, so the vector densifies &mdash; about 3.3&times; the memory here, on
+        5.7 million rows. Dividing by the standard deviation gives the scale-equalising
+        benefit and preserves the zeros.</p></div>
+      </details>
+      <details>
+        <summary>Your PCA only keeps 28.5% of the variance. Isn't that a failure?</summary>
+        <div class="body"><p>It is a real cost, and the project reports it rather than
+        hiding it: R&sup2; drops from 0.9289 to 0.7034. That is the honest answer to
+        "should you always reduce dimensions" &mdash; no. PCA was required, so both arms were
+        run, and the comparison is itself the finding. The no-PCA arm also gives
+        interpretable feature importances, which PCA's blended components cannot.</p></div>
+      </details>
+      <details>
+        <summary>Why does the GLM perform so badly?</summary>
+        <div class="body"><p>Structural mismatch, not a bug. A log link models a response
+        that gets <em>multiplied</em> by its predictors. Arrival delay is <em>added</em> to
+        departure delay. The link function encodes the wrong arithmetic, so the model is
+        fighting the data. An identity link would fix it; the mismatch is documented as a
+        finding.</p></div>
+      </details>
+      <details>
+        <summary>Where is Arrow used, and why does it matter?</summary>
+        <div class="body"><p>In <code>HaversineTransformer</code>, via two
+        <code>@pandas_udf</code> functions. Without Arrow, running Python on Spark data
+        converts one row at a time into Python objects. Arrow ships 20,000-row batches in
+        a binary columnar format, so the trigonometry runs once over a NumPy array in C
+        rather than 5.7 million times through the interpreter.</p></div>
+      </details>
+      <details>
+        <summary>Why did you run two arms for every model instead of just picking one?</summary>
+        <div class="body"><p>Because the brief requires PCA and PCA measurably hurts here.
+        Running both is what turns that tension into evidence: seven paired comparisons,
+        PCA losing every one, with the cost quantified per model. One arm would have been
+        either non-compliant or dishonest.</p></div>
+      </details>
+      <details>
+        <summary>Can I just re-run it to reproduce your numbers?</summary>
+        <div class="body"><p>Only at the same core count. <code>randomSplit</code> draws
+        independently per input partition, and a Parquet read makes one partition per
+        core &mdash; so the same seed gives a different split on a different machine: 16 cores
+        gives 4,564,168 training rows, 8 gives 4,563,188, 4 gives 4,562,867. The
+        tournament ran at <code>local[*]</code>. Anything reconstructing that split must call
+        <code>mllib_pipeline.make_split()</code> at the same core count, and
+        <code>scripts/check_split.py</code> asserts it has not moved.</p></div>
+      </details>
+    </div>
+
+    <footer>
+      <p>Every number on this page came from the project itself &mdash; the MLflow store,
+      the fitted <code>PipelineModel</code> on disk, and <code>docs/benchmarks/</code> &mdash; not from
+      memory. The formal derivations live in <code>docs/REPORT.md</code>; setup and
+      troubleshooting live in <code>docs/team-guide.html</code>.</p>
+    </footer>
+  </div>
+</section>
+
+</main>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---- rail scroll-spy ------------------------------------------------ */
+  var links = Array.prototype.slice.call(document.querySelectorAll(".rail a"));
+  var sections = links.map(function (a) {
+    return document.querySelector(a.getAttribute("href"));
+  });
+  function spy() {
+    var best = 0, y = window.scrollY + 140;
+    sections.forEach(function (s, i) { if (s && s.offsetTop <= y) best = i; });
+    links.forEach(function (a, i) { a.classList.toggle("on", i === best); });
+  }
+  window.addEventListener("scroll", spy, { passive: true });
+  spy();
+
+  /* ---- 1. lazy DAG ---------------------------------------------------- */
+  var dagOut = document.getElementById("dag-out");
+  var chain = [];
+  var LABEL = {
+    filter: ".filter(ARRIVAL_DELAY > 0)",
+    select: ".select(AIRLINE, ROUTE, DEPARTURE_DELAY)",
+    join:   ".join(airports, on=ORIGIN_AIRPORT)",
+    group:  ".groupBy(AIRLINE).avg(ARRIVAL_DELAY)"
+  };
+  function drawDag(ran) {
+    var out = ['<span class="dim">df = spark.read.parquet("flights_curated")</span>'];
+    chain.forEach(function (op) { out.push("   " + LABEL[op]); });
+    out.push("");
+    if (!ran) {
+      out.push('<span class="dim">rows actually computed so far ......</span> <span class="hi">0</span>');
+      out.push('<span class="dim">time elapsed .......................</span> <span class="hi">0.00 s</span>');
+      out.push("");
+      out.push(chain.length
+        ? '<span class="dim">Spark has written down ' + chain.length +
+          ' step' + (chain.length > 1 ? "s" : "") + ' and done none of them.</span>'
+        : '<span class="dim">Add some steps.</span>');
+    } else {
+      out.push('<span class="hi">.count()  &larr; an ACTION. now everything runs.</span>');
+      out.push("");
+      out.push('<span class="dim">rows scanned .......................</span> <span class="hi">5,704,000</span>');
+      out.push('<span class="dim">steps executed .....................</span> <span class="hi">' + chain.length + '</span>');
+      out.push('<span class="dim">time elapsed .......................</span> <span class="hi">' +
+        (1.4 + chain.length * 0.9).toFixed(2) + ' s</span>');
+      if (chain.indexOf("filter") > -1) {
+        out.push("");
+        out.push('<span class="dim">optimiser note: the filter was pushed down into the</span>');
+        out.push('<span class="dim">file read, so rows failing it were never loaded.</span>');
+      }
+    }
+    dagOut.innerHTML = out.join("\n");
+  }
+  document.querySelectorAll("[data-op]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      var op = b.getAttribute("data-op");
+      if (op === "reset") { chain = []; drawDag(false); }
+      else if (op === "run") { if (chain.length) drawDag(true); }
+      else { if (chain.length < 4) chain.push(op); drawDag(false); }
+    });
+  });
+  drawDag(false);
+
+  /* ---- 2. narrow vs wide ---------------------------------------------- */
+  var shufParts = document.getElementById("shuf-parts");
+  var shufOut = document.getElementById("shuf-out");
+  var BASE = [
+    ["DL 118", "AA 92", "DL 771", "UA 43"],
+    ["AA 250", "DL 6", "WN 88", "AA 17"],
+    ["UA 900", "WN 31", "DL 55", "UA 12"]
+  ];
+  function airlineOf(t) { return t.split(" ")[0]; }
+  function drawShuf(mode) {
+    var groups;
+    if (mode === "narrow") {
+      groups = BASE.map(function (p) { return p.slice(); });
+    } else {
+      var by = {};
+      BASE.forEach(function (p) {
+        p.forEach(function (t) {
+          var k = airlineOf(t);
+          (by[k] = by[k] || []).push(t);
+        });
+      });
+      var keys = Object.keys(by).sort();
+      groups = [[], [], []];
+      keys.forEach(function (k, i) { groups[i % 3] = groups[i % 3].concat(by[k]); });
+    }
+    shufParts.innerHTML = groups.map(function (g, i) {
+      var chips = g.map(function (t) {
+        var origin = -1;
+        BASE.forEach(function (p, pi) { if (p.indexOf(t) > -1) origin = pi; });
+        var moved = mode === "wide" && origin !== i;
+        return '<span class="chip' + (moved ? " moved" : "") + '">' + t + "</span>";
+      }).join("");
+      return '<div class="part"><span class="plabel">part ' + i + "</span>" + chips + "</div>";
+    }).join("");
+
+    if (mode === "narrow") {
+      shufOut.innerHTML = [
+        'df.<span class="hi">withColumn</span>("late", col("ARRIVAL_DELAY") &gt; 0)',
+        "",
+        '<span class="dim">rows that crossed the network ......</span> <span class="hi">0</span>',
+        '<span class="dim">shuffle .............................</span> <span class="hi">none</span>',
+        "",
+        '<span class="dim">Every worker did its own rows. Nothing moved. This is cheap.</span>'
+      ].join("\n");
+    } else {
+      var moved = 0;
+      groups.forEach(function (g, i) {
+        g.forEach(function (t) {
+          var origin = -1;
+          BASE.forEach(function (p, pi) { if (p.indexOf(t) > -1) origin = pi; });
+          if (origin !== i) moved++;
+        });
+      });
+      shufOut.innerHTML = [
+        'df.<span class="hi">groupBy</span>("AIRLINE").avg("ARRIVAL_DELAY")',
+        "",
+        '<span class="dim">rows that crossed the network ......</span> <span class="warn">' + moved + " of 12</span>",
+        '<span class="dim">shuffle .............................</span> <span class="warn">yes</span>',
+        "",
+        '<span class="dim">Every flight for one airline had to land on one worker,</span>',
+        '<span class="dim">so rows were written out, sent, and read back in.</span>',
+        '<span class="dim">On 5.7M rows this is where your time goes.</span>'
+      ].join("\n");
+    }
+  }
+  document.querySelectorAll("[data-shuf]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("[data-shuf]").forEach(function (o) { o.classList.remove("on"); });
+      b.classList.add("on");
+      drawShuf(b.getAttribute("data-shuf"));
+    });
+  });
+  drawShuf("narrow");
+
+  /* ---- 3. target encoding smoothing ----------------------------------- */
+  var PRIOR = 4.417249978528398;
+  var tn = document.getElementById("te-n"), ty = document.getElementById("te-y"),
+      tm = document.getElementById("te-m"), teOut = document.getElementById("te-out");
+  function drawTe() {
+    var n = +tn.value, y = +ty.value, m = +tm.value;
+    document.getElementById("te-n-out").textContent = n;
+    document.getElementById("te-y-out").textContent = y.toFixed(1);
+    document.getElementById("te-m-out").textContent = m;
+    var enc = (y * n + m * PRIOR) / (n + m);
+    var pull = Math.abs(y - PRIOR) < 1e-9 ? 0 : (1 - (enc - PRIOR) / (y - PRIOR)) * 100;
+    var trust = n / (n + m) * 100;
+    teOut.innerHTML = [
+      'encoded = ( &Sigma;y + m &middot; prior ) / ( n + m )',
+      '        = ( ' + (y * n).toFixed(1) + ' + ' + m + ' &times; ' + PRIOR.toFixed(3) +
+        ' ) / ( ' + n + ' + ' + m + ' )',
+      '        = <span class="hi">' + enc.toFixed(3) + ' minutes</span>',
+      "",
+      '<span class="dim">its own mean .......................</span> ' + y.toFixed(1),
+      '<span class="dim">global prior .......................</span> ' + PRIOR.toFixed(3),
+      '<span class="dim">weight given to its own evidence ...</span> <span class="hi">' +
+        trust.toFixed(1) + "%</span>",
+      '<span class="dim">pulled toward the prior by .........</span> <span class="' +
+        (pull > 60 ? "warn" : "hi") + '">' + pull.toFixed(1) + "%</span>",
+      "",
+      n < 10
+        ? '<span class="dim">Barely any evidence, so the encoder mostly ignores this</span>\n<span class="dim">category’s own mean. That is the protection working.</span>'
+        : (n > 150
+          ? '<span class="dim">Plenty of evidence, so its own mean is trusted almost fully.</span>'
+          : '<span class="dim">Moderate evidence — a blend of the two.</span>')
+    ].join("\n");
+  }
+  [tn, ty, tm].forEach(function (el) { el.addEventListener("input", drawTe); });
+  drawTe();
+
+  /* ---- 4. sparsity / withMean ----------------------------------------- */
+  var vecCells = document.getElementById("vec-cells"), vecOut = document.getElementById("vec-out");
+  var RAW = [26.0, 14.0, 6.8, 5.8, 7.4, 3.1, 5.2, 11.4, 26.0, 411.0, 1.08,
+             485.0, 611.0, 492.0, 0, 14, 47.4, -122.3, 28.4, -81.3,
+             0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0];
+  var MEANS = [0.9, 0.4, 6.5, 5.6, 6.4, 0.31, 0.29, 0.44, 0.9, 401.0, 1.11,
+               487.0, 605.0, 495.0, 0.28, 15.7, 38.5, -97.2, 38.5, -97.2,
+               0.14, 0.11, 0.09, 0.08, 0.07, 0.06, 0.05, 0.05, 0.04, 0.04, 0.03, 0.03];
+  function drawVec(centered) {
+    var html = RAW.map(function (v, i) {
+      var val = centered ? v - MEANS[i] : v;
+      var isZero = Math.abs(val) < 1e-9;
+      var cls = isZero ? "" : (centered && Math.abs(v) < 1e-9 ? "dense" : "nz");
+      var shown = Math.abs(val) >= 100 ? val.toFixed(0)
+                : (Math.abs(val) >= 10 ? val.toFixed(1) : val.toFixed(2));
+      return '<span class="cell ' + cls + '">' + shown + "</span>";
+    }).join("");
+    vecCells.innerHTML = html;
+    var nz = RAW.filter(function (v, i) {
+      var val = centered ? v - MEANS[i] : v;
+      return Math.abs(val) > 1e-9;
+    }).length;
+    var pct = (nz / RAW.length * 100).toFixed(0);
+    vecOut.innerHTML = centered
+      ? [
+        'StandardScaler(<span class="warn">withMean=True</span>, withStd=True)',
+        "",
+        '<span class="dim">non-zero entries ...................</span> <span class="warn">' +
+          nz + " of " + RAW.length + "  (" + pct + "%)</span>",
+        '<span class="dim">stored as ..........................</span> <span class="warn">DenseVector</span>',
+        "",
+        '<span class="dim">Every one-hot zero became a small negative number.</span>',
+        '<span class="dim">Nothing is zero any more, so Spark must store all of it —</span>',
+        '<span class="dim">about 3.3× the memory here, on 5.7 million rows.</span>'
+      ].join("\n")
+      : [
+        'StandardScaler(<span class="hi">withMean=False</span>, withStd=True)',
+        "",
+        '<span class="dim">non-zero entries ...................</span> <span class="hi">' +
+          nz + " of " + RAW.length + "  (" + pct + "%)</span>",
+        '<span class="dim">stored as ..........................</span> <span class="hi">SparseVector</span>',
+        "",
+        '<span class="dim">Dividing by σ leaves every zero as a zero, so the</span>',
+        '<span class="dim">one-hot block stays sparse. You still get the scale</span>',
+        '<span class="dim">equalisation that regularisation needs.</span>'
+      ].join("\n");
+  }
+  document.querySelectorAll("[data-scale]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      document.querySelectorAll("[data-scale]").forEach(function (o) { o.classList.remove("on"); });
+      b.classList.add("on");
+      drawVec(b.getAttribute("data-scale") === "on");
+    });
+  });
+  drawVec(false);
+
+  /* ---- 5. PCA explained variance -------------------------------------- */
+  var PCA = [0.05483522201570553, 0.048396100180172194, 0.033453043081761856,
+             0.02816526690722047, 0.025032273577760587, 0.02229865683634473,
+             0.020568044329459478, 0.018985970082670254, 0.016882293514026425,
+             0.01595280108219892];
+  var bars = document.getElementById("pca-bars"),
+      labels = document.getElementById("pca-labels"),
+      pcaOut = document.getElementById("pca-out");
+  var maxV = Math.max.apply(null, PCA);
+  bars.innerHTML = PCA.map(function (v, i) {
+    return '<div class="bar" data-i="' + i + '" style="height:' +
+      (v / maxV * 100).toFixed(1) + '%"></div>';
+  }).join("");
+  labels.innerHTML = PCA.map(function (v, i) { return "<span>PC" + (i + 1) + "</span>"; }).join("");
+  function pcaText(i) {
+    var cum = 0;
+    for (var j = 0; j <= i; j++) { cum += PCA[j]; }
+    var total = PCA.reduce(function (a, b) { return a + b; }, 0);
+    return [
+      '<span class="dim">component ..........................</span> <span class="hi">PC' + (i + 1) + "</span>",
+      '<span class="dim">variance it explains alone .........</span> <span class="hi">' +
+        (PCA[i] * 100).toFixed(2) + "%</span>",
+      '<span class="dim">cumulative through PC' + (i + 1) +
+        (i + 1 < 10 ? " ............" : " ...........") + "</span> <span class=\"hi\">" +
+        (cum * 100).toFixed(2) + "%</span>",
+      "",
+      '<span class="dim">all 10 components together .........</span> <span class="warn">' +
+        (total * 100).toFixed(1) + "%</span>",
+      '<span class="dim">discarded ..........................</span> <span class="warn">' +
+        ((1 - total) * 100).toFixed(1) + "%</span>"
+    ].join("\n");
+  }
+  bars.querySelectorAll(".bar").forEach(function (b) {
+    b.addEventListener("mouseenter", function () { pcaOut.innerHTML = pcaText(+b.getAttribute("data-i")); });
+    b.addEventListener("focus", function () { pcaOut.innerHTML = pcaText(+b.getAttribute("data-i")); });
+  });
+  pcaOut.innerHTML = pcaText(9);
+})();
+</script>
