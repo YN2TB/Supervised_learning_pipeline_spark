@@ -11,6 +11,8 @@ Pipeline stages
     ``SignedLog1pTransformer``    skew compression that tolerates negatives
     ``OutlierIQRTruncator``       Estimator -> ``OutlierIQRTruncatorModel``
     ``TargetEncoder``             Estimator -> ``TargetEncoderModel``
+    ``RowMatrixPCA``              Estimator -> stock ``PCAModel``, fitted
+                                  through ``RowMatrix.computeSVD``
 
 Two design decisions are worth stating up front, because both are places
 where the obvious implementation is subtly wrong.
@@ -43,7 +45,8 @@ import pandas as pd
 from pyspark import keyword_only
 from pyspark.ml import Estimator, Model, Transformer
 from pyspark.ml.param import Param, Params, TypeConverters
-from pyspark.ml.param.shared import HasInputCols, HasOutputCols
+from pyspark.ml.param.shared import (HasInputCol, HasInputCols, HasOutputCol,
+                                     HasOutputCols)
 from pyspark.ml.util import DefaultParamsReadable, DefaultParamsWritable
 from pyspark.sql import DataFrame, functions as F
 from pyspark.sql.types import DoubleType
@@ -524,3 +527,160 @@ class TargetEncoder(Estimator, HasInputCols, HasOutputCols, _TargetEncoderParams
             inputCols=self.getInputCols(), outputCols=self.getOutputCols(),
             labelCol=label, mappingJson=json.dumps(mapping), prior=prior,
             smoothing=m)
+
+
+# ---------------------------------------------------------------------------
+# RowMatrixPCA
+# ---------------------------------------------------------------------------
+class _RowMatrixPCAParams(Params):
+    k = Param(Params._dummy(), "k", "number of principal components to keep",
+              typeConverter=TypeConverters.toInt)
+    svdMode = Param(Params._dummy(), "svdMode",
+                    "RowMatrix.computeSVD mode: auto, local-svd, local-eigs, dist-eigs",
+                    typeConverter=TypeConverters.toString)
+    maxIter = Param(Params._dummy(), "maxIter",
+                    "ARPACK iteration cap (used by the eigs modes)",
+                    typeConverter=TypeConverters.toInt)
+    tol = Param(Params._dummy(), "tol", "ARPACK convergence tolerance",
+                typeConverter=TypeConverters.toFloat)
+    centre = Param(Params._dummy(), "centre",
+                   "subtract the column means before the SVD, as PCA requires",
+                   typeConverter=TypeConverters.toBoolean)
+
+
+class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
+                   DefaultParamsReadable, DefaultParamsWritable):
+    """PCA fitted through ``RowMatrix.computeSVD`` instead of ``spark.ml``'s PCA.
+
+    The brief asks how PySpark computes PCA *"using RowMatrix SVD without
+    collecting full covariance matrices to the Driver node"*. ``spark.ml``'s
+    ``PCA`` does not do that. It calls
+    ``RowMatrix.computePrincipalComponentsAndExplainedVariance``, which has no
+    mode parameter and exactly one path: build the whole n x n covariance via
+    ``computeCovariance``, then run a local Breeze SVD on the driver. (Confirmed
+    by disassembling ``spark-mllib_2.12-3.5.4.jar``: that method's bytecode holds
+    one ``computeCovariance`` and no ``symmetricEigs``.)
+
+    ``computeSVD`` is the method that *can* avoid it. Under ``dist-eigs`` it
+    calls ``EigenValueDecomposition.symmetricEigs``, whose signature takes a
+    ``DenseVector => DenseVector`` function rather than a matrix - ARPACK's
+    implicitly-restarted Lanczos, which only ever asks "given v, what is
+    (A^T A)v?" and gets it from the distributed ``multiplyGramianMatrixBy``.
+    There is nowhere for an n x n object to exist.
+
+    Three things are worth knowing before using this in place of ``PCA``:
+
+    * **The mode must be named explicitly.** PySpark's Python ``computeSVD``
+      wrapper exposes only ``(k, computeU, rCond)`` and so always runs "auto";
+      at n < 100 "auto" picks a *local* path that forms the Gramian on the
+      driver - precisely what we are trying to avoid. The six-argument Scala
+      overload is ``private[mllib]``, which compiles to public bytecode, so it
+      is reachable through py4j.
+
+    * **computeSVD does not centre, so this class does it.** PCA is the
+      eigen-decomposition of the *covariance* - the centred second moment - and
+      ``computeSVD`` decomposes the matrix it is given. Handed uncentred rows it
+      returns the second-moment directions, whose leading component points
+      largely at the mean vector: measured on eight real flight columns, those
+      components matched ``spark.ml``'s at only
+      |cos| = [0.79, 0.78, 0.53, 0.31]. ``_fit`` therefore computes the column
+      means in one distributed pass - a p-vector, so still no n x n object - and
+      centres the rows before the SVD. With that, the components match
+      ``spark.ml``'s PCA at |cos| = [1.0, 1.0, 1.0, 1.0] and the explained
+      variances agree to five decimals.
+
+      The returned ``PCAModel`` projects *without* re-centring, which is
+      ``spark.ml``'s own convention (its PCA fits on centred data and transforms
+      uncentred rows). Matching it exactly is deliberate: it means switching to
+      this estimator changes the mechanism, not the numbers. Centring is a fit-time
+      cost only and never touches the serialised model, so the ``withMean=False``
+      sparsity decision upstream is unaffected at transform and streaming time.
+
+    * **Explained variance needs a denominator computeSVD does not return.**
+      The ratio is sigma_i^2 / trace(A^T A), and the trace is the sum of
+      per-column sums of squares - one distributed pass over the rows, still with
+      no n x n matrix anywhere.
+
+    The fitted result is a stock ``pyspark.ml.feature.PCAModel``, so the
+    projection runs in the JVM at full speed and serialises with no custom IO.
+    """
+
+    @keyword_only
+    def __init__(self, inputCol="features_selected", outputCol="features", k=10,
+                 svdMode="dist-eigs", maxIter=300, tol=1e-10, centre=True):
+        super().__init__()
+        self._setDefault(inputCol="features_selected", outputCol="features", k=10,
+                         svdMode="dist-eigs", maxIter=300, tol=1e-10, centre=True)
+        self._set(**self._input_kwargs)
+
+    def _fit(self, dataset: DataFrame):
+        from pyspark.ml.common import _py2java
+        from pyspark.ml.feature import PCAModel
+        from pyspark.ml.linalg import DenseMatrix, DenseVector
+        from pyspark.mllib.linalg import Vectors as MLLibVectors
+        from pyspark.mllib.linalg.distributed import RowMatrix
+
+        in_col = self.getOrDefault(self.inputCol)
+        k = int(self.getOrDefault(self.k))
+        mode = self.getOrDefault(self.svdMode)
+        centre = bool(self.getOrDefault(self.centre))
+        sc = dataset.sparkSession.sparkContext
+
+        rows = dataset.select(in_col).rdd.map(lambda r: MLLibVectors.fromML(r[0]))
+        rows.cache()
+        try:
+            if centre:
+                # PCA is the eigen-decomposition of the COVARIANCE, i.e. of the
+                # centred second moment - so the rows must be centred before the
+                # SVD or the leading component just points at the mean vector.
+                # The mean is a p-vector from one distributed pass; no n x n
+                # object is created, so the property the brief asks about holds.
+                n_rows = rows.count()
+                total = rows.treeAggregate(
+                    None,
+                    lambda acc, v: v.toArray() if acc is None else acc + v.toArray(),
+                    lambda a, b: b if a is None else (a if b is None else a + b))
+                mu = total / float(n_rows)
+                bmu = sc.broadcast(mu)
+                work = rows.map(lambda v: MLLibVectors.dense(v.toArray() - bmu.value))
+                work.cache()
+            else:
+                work = rows
+
+            rm = RowMatrix(work)
+            # Reach past the Python wrapper so the mode can be named; see the
+            # class docstring for why "auto" is not good enough here.
+            jm = rm._java_matrix_wrapper._java_model
+            svd = jm.computeSVD(k, False, 1e-9,
+                                int(self.getOrDefault(self.maxIter)),
+                                float(self.getOrDefault(self.tol)), mode)
+
+            jV = svd.V()
+            sing = [float(x) for x in svd.s().toArray()]
+            pc = DenseMatrix(int(jV.numRows()), int(jV.numCols()),
+                             [float(x) for x in jV.toArray()],
+                             bool(jV.isTransposed()))
+
+            # The explained-variance denominator is the TOTAL variance, which
+            # computeSVD does not return. It is trace(A^T A) on the same rows the
+            # SVD saw - the sum of per-column sums of squares, one more
+            # distributed pass, still with no n x n matrix anywhere.
+            trace = work.map(lambda v: float(v.dot(v))).sum()
+        finally:
+            rows.unpersist()
+            if centre:
+                work.unpersist()
+
+        ev = DenseVector([(x * x / trace) if trace > 0 else 0.0 for x in sing])
+        print(f"  (RowMatrixPCA: mode={mode} k={k} centred={centre} "
+              f"retained={float(sum(ev.toArray())):.4f})")
+
+        java_model = sc._jvm.org.apache.spark.ml.feature.PCAModel(
+            self.uid + "_pca", _py2java(sc, pc), _py2java(sc, ev))
+        model = PCAModel(java_model)
+        # k has no default on a directly-constructed PCAModel, and
+        # validateAndTransformSchema reads it - without this, transform() dies
+        # with "Failed to find a default value for k".
+        model._set(k=k, inputCol=in_col, outputCol=self.getOrDefault(self.outputCol))
+        model._transfer_params_to_java()
+        return model

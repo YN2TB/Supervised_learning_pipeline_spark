@@ -64,7 +64,7 @@ The cost is a function of the one-hot expansion. In our assembled vector:
 | non-zeros per row (20 numeric + 4 one-hot indicators) | ~24 |
 | density | ~30% |
 
-Centering would take every row from ~24 stored values to 80 — a **~3.3× increase
+Centering would take every row from 23 stored values to 80 — a **2.0× increase
 in shuffle volume, cache footprint and GC pressure**, for 5.7M rows, and it scales
 with the *worst* case: push `ROUTE` (4,279 levels) through one-hot instead of
 target encoding and density falls below 1%, making centering a ~100× penalty.
@@ -115,7 +115,7 @@ it with rank intact. But the deeper lesson from this dataset is that sometimes
 the right answer is **neither**, and we got this wrong twice before measuring it.
 
 `DEPARTURE_DELAY` is the dominant predictor of arrival delay, and the two are
-very nearly *linear*: $\operatorname{corr} = 0.947$ with a slope near 1, which is
+very nearly *linear*: $\operatorname{corr} = 0.9446$ with a slope near 1, which is
 simply the statement that a late departure arrives late unless the schedule
 absorbs it.
 
@@ -177,22 +177,59 @@ The important consequence: **the $m \times n$ data matrix is never collected.** 
 an $n \times n$ summary — 80×80 here, ~51 KB — crosses the network per partial
 aggregate. Communication is independent of $m$ entirely.
 
-> **A correction worth stating precisely.** It is often said that Spark computes
-> PCA "without collecting the covariance matrix to the driver". That is not quite
-> right, and the distinction matters. `RowMatrix.computePrincipalComponentsAndExplainedVariance`
-> — the method `spark.ml`'s `PCA` calls — *does* assemble the full $n \times n$
-> covariance on the driver and run a **local** Breeze SVD on it. What is never
-> collected is the *data*. The claim that survives scrutiny is: cost is
-> $O(mn^2/p)$ distributed plus $O(n^3)$ on the driver, and only the second term is
-> centralised.
+That is the **Gramian route**, and it settles the *data*. It does not settle the
+question the specification actually asks, which names the *covariance matrix*.
+Those are different objects and they get different answers:
+
+> **The specification's mechanism is real, and this pipeline now uses it.**
+> `RowMatrix` exposes two different routes, and the distinction is worth stating
+> precisely because they answer the question differently.
 >
-> That is fine at $n=80$ ($80^3 \approx 5\times10^5$ flops, microseconds) and is
-> precisely why it becomes the bottleneck as $n$ grows: the driver-side term is
-> cubic and single-threaded. `RowMatrix.computeSVD` therefore switches strategy by
-> size — a local dense SVD for small $n$, and ARPACK's implicitly-restarted
-> Lanczos for large $n$ or small $k$, where only the matrix–vector product
-> $A^\top(Av)$ is distributed and the driver never holds an $n \times n$ object at
-> all.
+> `RowMatrix.computeSVD(k, computeU, rCond, maxIter, tol, mode)` takes a `mode`
+> selecting among `auto`, `local-svd`, `local-eigs` and `dist-eigs`. Under
+> **`dist-eigs`** it calls `EigenValueDecomposition.symmetricEigs`, whose signature
+> takes a *function* `DenseVector => DenseVector` rather than a matrix - ARPACK's
+> implicitly-restarted Lanczos, which only ever needs the product $A^\top(Av)$,
+> supplied by the distributed `multiplyGramianMatrixBy`. On that path the
+> $n \times n$ matrix is never materialised anywhere.
+>
+> `spark.ml`'s `PCA` does **not** take that route. It calls
+> `RowMatrix.computePrincipalComponentsAndExplainedVariance`, which has no `mode`
+> parameter and exactly one code path: assemble the full covariance via
+> `computeCovariance`, then run a **local** Breeze SVD on the driver. *(Verified by
+> disassembling `spark-mllib_2.12-3.5.4.jar`: that method's bytecode contains one
+> `computeCovariance` call and no `symmetricEigs`, while `computeSVD` contains both
+> `symmetricEigs` and `multiplyGramianMatrixBy`.)*
+>
+> The PCA arms therefore no longer use `spark.ml`'s `PCA`. They use
+> `custom_transformers.RowMatrixPCA`, which calls `computeSVD` with the mode named
+> explicitly. One obstacle had to be worked around: PySpark's Python `computeSVD`
+> wrapper exposes only `(k, computeU, rCond)`, so it always runs `auto` - and at
+> $n < 100$ `auto` selects a *local* path that forms the Gramian on the driver
+> anyway. The six-argument Scala overload is `private[mllib]`, which compiles to
+> public bytecode, so it is reachable through py4j.
+
+**Centring, and why the numbers did not move.** `computeSVD` decomposes whatever
+matrix it is handed, and PCA is the decomposition of the *covariance* - the centred
+second moment. Handed uncentred rows it returns second-moment directions whose
+leading component points largely at the mean vector: measured on eight real flight
+columns, those matched `spark.ml`'s components at only
+$|\cos| = [0.79, 0.78, 0.53, 0.31]$. `RowMatrixPCA` therefore computes the column
+means in one distributed pass - a $p$-vector, so still no $n \times n$ object - and
+centres before the SVD. With that, the components match `spark.ml`'s at
+$|\cos| = [1.0, 1.0, 1.0, 1.0]$ and the explained variances agree to five decimals.
+The returned model projects *without* re-centring, which is `spark.ml`'s own
+convention, so switching estimators changed the mechanism and not the results - the
+tournament numbers stand unchanged. Verified round-tripping through
+`PipelineModel.save`/`load`.
+
+**What it costs.** `dist-eigs` runs one distributed pass per Lanczos iteration: on a
+small probe it produced 19 Spark stages where the Gramian route produced one. The
+driver-side term it avoids is $O(n^3) \approx 5\times10^5$ flops, microseconds at
+$n = 80$. So this is the more faithful implementation rather than the faster one,
+and `--svd-mode local-eigs` restores the cheaper behaviour. The distributed route
+repays its extra passes only once $n$ is large enough that an $n \times n$ object on
+one machine genuinely hurts.
 
 ### A2.2 From SVD to principal components
 
@@ -682,7 +719,7 @@ MaterializeCache         (persists during fit only)
 VectorAssembler          -> features_raw   (80 slots)
 StandardScaler           (withMean=False, withStd=True)  -- see A1.2
 VarianceThresholdSelector(drops zero-variance columns)   -- see A2.3
-PCA(k=10)  or  identity  (two arms)
+RowMatrixPCA(k=10)  or  identity  (two arms)   -- see A2.1
 <estimator>
 ```
 
@@ -761,7 +798,7 @@ Split: 4,564,168 train / 1,139,832 test. Hyperparameters searched on 91,144 rows
 
 **The linear model wins the regression task outright**, and that is the headline
 result rather than an anticlimax. Arrival delay is very nearly an affine function
-of departure delay ($r = 0.947$): a flight that pushes back 40 minutes late lands
+of departure delay ($r = 0.9446$): a flight that pushes back 40 minutes late lands
 about 40 minutes late. A single coefficient captures that exactly. Both ensembles
 must approximate the same straight line with piecewise-constant regions, spending
 depth budget to do worse — GBT reaches $R^2$ 0.894 and Random Forest 0.873 against

@@ -25,7 +25,7 @@ from pyspark.ml.classification import GBTClassifier, LinearSVC, RandomForestClas
 from pyspark.ml.evaluation import (BinaryClassificationEvaluator,
                                    MulticlassClassificationEvaluator,
                                    RegressionEvaluator)
-from pyspark.ml.feature import (PCA, Imputer, OneHotEncoder, SQLTransformer,
+from pyspark.ml.feature import (Imputer, OneHotEncoder, SQLTransformer,
                                 StandardScaler, StringIndexer, VarianceThresholdSelector,
                                 VectorAssembler)
 from pyspark.ml.regression import (GBTRegressor, GeneralizedLinearRegression,
@@ -36,7 +36,7 @@ from pyspark.sql import functions as F
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import custom_transformers  # noqa: E402  (for release_caches between arms)
 from custom_transformers import (  # noqa: E402
-    HaversineTransformer, MaterializeCache, OutlierIQRTruncator,
+    HaversineTransformer, MaterializeCache, OutlierIQRTruncator, RowMatrixPCA,
     SignedLog1pTransformer, TargetEncoder,
 )
 from spark_session import TRACKING_URI, build_spark, path  # noqa: E402
@@ -100,7 +100,8 @@ IMPUTE_COLS = ["SCHEDULE_SPEED_MPH", "ROUTE_DETOUR"]
 ONEHOT_NUMERIC = ["MONTH", "DAY_OF_WEEK", "DEP_HOUR"]
 
 
-def build_feature_stages(label_col: str, use_pca: bool, pca_k: int):
+def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
+                         svd_mode: str = "dist-eigs"):
     """Shared preprocessing. Returns (stages, assembler_input_names)."""
     stages = []
 
@@ -151,7 +152,17 @@ def build_feature_stages(label_col: str, use_pca: bool, pca_k: int):
         varianceThreshold=0.0))
 
     if use_pca:
-        stages.append(PCA(k=pca_k, inputCol="features_selected", outputCol="features"))
+        # RowMatrixPCA, not spark.ml's PCA. The brief asks for PCA computed
+        # "using RowMatrix SVD without collecting full covariance matrices to
+        # the Driver node", and spark.ml's PCA does the opposite: it forms the
+        # whole 80x80 covariance on the driver. RowMatrixPCA calls
+        # RowMatrix.computeSVD with an explicit mode, so dist-eigs drives ARPACK
+        # Lanczos on distributed A^T(Av) products and no n x n matrix is ever
+        # materialised. See custom_transformers.RowMatrixPCA for the caveats -
+        # in particular that computeSVD does not centre.
+        stages.append(RowMatrixPCA(k=pca_k, svdMode=svd_mode,
+                                   inputCol="features_selected",
+                                   outputCol="features"))
     else:
         # Both arms must end with a column literally named "features" so that
         # a single estimator definition serves either one.
@@ -376,6 +387,9 @@ def main() -> None:
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--parallelism", type=int, default=4)
     ap.add_argument("--pca-k", type=int, default=10)
+    ap.add_argument("--svd-mode", default="dist-eigs",
+                    choices=["auto", "local-svd", "local-eigs", "dist-eigs"],
+                    help="RowMatrix.computeSVD mode for the PCA arms. dist-eigs keeps the covariance off the driver; local-* form it there.")
     ap.add_argument("--models", default="all")
     ap.add_argument("--experiment", default="flight-delay-mllib")
     ap.add_argument("--resume", dest="resume", action="store_true", default=True,
@@ -475,7 +489,7 @@ def main() -> None:
                     t0 = time.time()
 
                     stages, feature_names = build_feature_stages(
-                        spec["label"], use_pca, args.pca_k)
+                        spec["label"], use_pca, args.pca_k, args.svd_mode)
                     pipeline = Pipeline(stages=stages + [spec["estimator"]])
                     evals = evaluators(spec["task"], spec["label"])
                     primary = "rmse" if spec["task"] == "regression" else "areaUnderROC"
@@ -521,7 +535,7 @@ def main() -> None:
                                 {spec["estimator"].getParam(k): v
                                  for k, v in best_params.items()})
                             stages2, _ = build_feature_stages(
-                                spec["label"], use_pca, args.pca_k)
+                                spec["label"], use_pca, args.pca_k, args.svd_mode)
                             final = Pipeline(stages=stages2 + [best_est]).fit(train)
 
                         preds = final.transform(test)
