@@ -61,13 +61,15 @@ The cost is a function of the one-hot expansion. In our assembled vector:
 |---|---|
 | total feature slots after assembly | 80 |
 | slots contributed by one-hot groups (`AIRLINE`, `MONTH`, `DAY_OF_WEEK`, `DEP_HOUR`) | 60 |
-| non-zeros per row (20 numeric + 4 one-hot indicators) | ~24 |
-| density | ~30% |
+| non-zeros per row (19 numeric + 4 one-hot indicators) | 23 |
+| density | 28.75% |
 
-Centering would take every row from 23 stored values to 80 — a **2.0× increase
-in shuffle volume, cache footprint and GC pressure**, for 5.7M rows, and it scales
-with the *worst* case: push `ROUTE` (4,279 levels) through one-hot instead of
-target encoding and density falls below 1%, making centering a ~100× penalty.
+Centering would take every row from 23 stored values to 80. Measured with Spark's
+own `SizeEstimator` on the real vector shape, that is **336 bytes sparse against
+672 dense — a 2.0× increase** in shuffle volume, cache footprint and GC pressure,
+or 1.92 GB against 3.83 GB across 5.7M rows. It also scales with the *worst* case:
+push `ROUTE` (4,627 levels) through one-hot instead of target encoding and the
+same measurement gives **110×**.
 
 **How `withStd` avoids it.** Scaling is multiplicative:
 
@@ -223,13 +225,27 @@ convention, so switching estimators changed the mechanism and not the results - 
 tournament numbers stand unchanged. Verified round-tripping through
 `PipelineModel.save`/`load`.
 
-**What it costs.** `dist-eigs` runs one distributed pass per Lanczos iteration: on a
-small probe it produced 19 Spark stages where the Gramian route produced one. The
-driver-side term it avoids is $O(n^3) \approx 5\times10^5$ flops, microseconds at
-$n = 80$. So this is the more faithful implementation rather than the faster one,
-and `--svd-mode local-eigs` restores the cheaper behaviour. The distributed route
-repays its extra passes only once $n$ is large enough that an $n \times n$ object on
-one machine genuinely hurts.
+**What it costs, and which route is the default.** `dist-eigs` runs one distributed
+pass per Lanczos iteration where the Gramian route runs one pass total. Measured on
+the real 80-column vector at $k=10$, PCA-stage time only:
+
+| rows | `local-eigs` | `dist-eigs` | ratio |
+|---|---|---|---|
+| 50,000 | 18.9 s | 126.6 s | 6.7x |
+| 200,000 | 20.8 s | 167.0 s | 8.0x |
+
+The gap widens with $m$, because `local-eigs` is dominated by fixed overhead while
+`dist-eigs` pays per pass. Across the tournament — seven PCA arms, each refitted per
+fold and per grid point — that difference is several hours.
+
+**Both routes are implemented and verified to give identical components.**
+`--svd-mode dist-eigs` is the mechanism the specification describes and is the
+reason `RowMatrixPCA` exists; `local-eigs` is the **default**, because the analysis
+above is that at $n = 80$ the driver-side $O(n^3)$ is microseconds and forming the
+Gramian is the right engineering call. Defaulting to the distributed route would
+contradict our own conclusion in order to pay 6.7–8.0x for the same answer. The
+distributed route repays its extra passes only once $n$ is large enough that an
+$n \times n$ object on one machine genuinely hurts.
 
 ### A2.2 From SVD to principal components
 
@@ -588,7 +604,7 @@ on every read.
 
 ## B2. Custom transformers
 
-### B2.1 Why `OutlierIQRTruncator` is an Estimator, not a Transformer
+### B2.1 `OutlierIQRTruncator`: a Transformer subclass, fitted safely
 
 The brief says "subclass `pyspark.ml.Transformer` to compute $Q_1, Q_3$ bounds and
 clip". Implemented literally, that is a leak. A `Transformer` has only
@@ -603,6 +619,16 @@ freezes them into `OutlierIQRTruncatorModel`. Our Phase 2 test asserts both halv
 of this: that test data *would* have produced different fences (so the risk is
 real — 1 of 3 columns differs), and that `transform(test)` nonetheless respects the
 training fences exactly.
+
+**This still satisfies the requirement literally.** In PySpark,
+`pyspark.ml.Model` *is* a subclass of `pyspark.ml.Transformer`
+(`issubclass(Model, Transformer)` is `True`), so `OutlierIQRTruncatorModel` — the
+object that actually does the clipping inside the fitted `PipelineModel`, and the
+object that ships to streaming — **is** a `pyspark.ml.Transformer` subclass
+operating natively on DataFrames. The Estimator half adds a `fit` step in front of
+it; it does not replace the Transformer. `HaversineTransformer` and
+`SignedLog1pTransformer` subclass `Transformer` directly, so the pipeline carries
+both forms.
 
 Quantiles come from `approxQuantile`, a distributed Greenwald–Khanna sketch:
 single pass, $O(1/\varepsilon)$ memory per partition, all columns in one go —
@@ -632,9 +658,11 @@ high implied speed has little slack for a departure delay to absorb.
 
 ### B2.3 Leakage-safe target encoding
 
-`ORIGIN_AIRPORT` (318), `DESTINATION_AIRPORT` (317) and `ROUTE` (4,279 levels) are
-too high-cardinality for one-hot encoding — `ROUTE` alone would add 4,278 columns
-and, per A1.2, dominate the sparsity budget. Target encoding replaces each category
+`ORIGIN_AIRPORT` (319), `DESTINATION_AIRPORT` (319) and `ROUTE` (4,635 levels) are
+too high-cardinality for one-hot encoding — `ROUTE` alone would add 4,634 columns
+and, per A1.2, dominate the sparsity budget. (The fitted encoder holds 4,627
+routes, slightly fewer, because it learns from the training split only — which is
+exactly the leak-safety property being claimed.) Target encoding replaces each category
 with a smoothed mean of the target:
 
 $$e_c = \frac{\sum_{i \in c} y_i + m\bar{y}}{n_c + m}$$

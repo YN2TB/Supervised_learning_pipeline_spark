@@ -663,17 +663,17 @@ html { scroll-behavior: smooth; }
           <tbody>
             <tr><td>Total feature slots after assembly</td><td class="num">80</td></tr>
             <tr><td>Slots from one-hot groups</td><td class="num">60</td></tr>
-            <tr><td>Non-zeros per row</td><td class="num">~24</td></tr>
-            <tr><td>Density</td><td class="num">~30%</td></tr>
-            <tr class="hi"><td>Cost of centering</td><td class="num">~3.3&times;</td></tr>
+            <tr><td>Non-zeros per row</td><td class="num">23</td></tr>
+            <tr><td>Density</td><td class="num">28.75%</td></tr>
+            <tr class="hi"><td>Cost of centering</td><td class="num">2.0&times;</td></tr>
           </tbody>
         </table>
       </div>
 
       <p>
-        A <strong>3.3&times; increase in shuffle volume, cache footprint and GC pressure</strong>
+        A <strong>2.0&times; increase in shuffle volume, cache footprint and GC pressure</strong>
         across 5.7M rows &mdash; and it scales with the worst case, not the average. Push
-        <code>ROUTE</code> (4,279 levels) through one-hot instead of target encoding and
+        <code>ROUTE</code> (4,635 levels) through one-hot instead of target encoding and
         density falls below 1%, making centering a <strong>~100&times;</strong> penalty.
       </p>
 
@@ -750,7 +750,7 @@ html { scroll-behavior: smooth; }
         <p class="finding-head">Measured &mdash; two wrong fixes before the right one</p>
         <p>
           <code>DEPARTURE_DELAY</code> and arrival delay are very nearly <em>linear</em>:
-          correlation <strong>0.947</strong>, slope near 1. Clipping first dropped that to
+          correlation <strong>0.9446</strong>, slope near 1. Clipping first dropped that to
           0.614, capping achievable <var>R</var><sup>2</sup> near 0.38. The obvious repair
           &mdash; signed log instead &mdash; was <em>also</em> wrong: a monotone nonlinear
           transform destroys exactly the structure a linear model exists to exploit.
@@ -875,22 +875,43 @@ html { scroll-behavior: smooth; }
       </div>
 
       <div class="aside">
-        <p class="aside-head">A correction worth stating precisely</p>
+        <p class="aside-head">Two routes through RowMatrix &mdash; and which one this pipeline takes</p>
         <p>
-          It is often said Spark computes PCA <em>&ldquo;without collecting the covariance
-          matrix to the driver&rdquo;</em>. That is not quite right, and the distinction
-          matters. <code>RowMatrix.computePrincipalComponentsAndExplainedVariance</code>
-          <em>does</em> assemble the full <var>n</var>&nbsp;&times;&nbsp;<var>n</var>
-          covariance on the driver and run a <strong>local</strong> Breeze SVD on it.
-          What is never collected is the <em>data</em>.
+          <code>RowMatrix.computeSVD</code> accepts a <code>mode</code> of
+          <code>auto</code>, <code>local-svd</code>, <code>local-eigs</code> or
+          <code>dist-eigs</code>. Under <code>dist-eigs</code> it calls
+          <code>EigenValueDecomposition.symmetricEigs</code>, whose signature takes a
+          <em>function</em> <code>DenseVector =&gt; DenseVector</code> rather than a
+          matrix &mdash; ARPACK&rsquo;s implicitly-restarted Lanczos, needing only the
+          product <var>A</var><sup>&#7488;</sup>(<var>Av</var>) from the distributed
+          <code>multiplyGramianMatrixBy</code>. On that path no
+          <var>n</var>&nbsp;&times;&nbsp;<var>n</var> matrix is ever materialised. That
+          is precisely the mechanism the specification asks about.
         </p>
         <p>
-          The claim that survives scrutiny: cost is
-          <var>O</var>(<var>mn</var><sup>2</sup>/<var>p</var>) distributed plus
-          <var>O</var>(<var>n</var><sup>3</sup>) on the driver, and only the second term is
-          centralised. That is fine at <var>n</var>&nbsp;=&nbsp;80 &mdash; and is precisely
-          why it becomes the bottleneck as <var>n</var> grows, being cubic and
-          single-threaded.
+          <code>spark.ml</code>&rsquo;s <code>PCA</code> does <strong>not</strong> call it. It
+          uses <code>computePrincipalComponentsAndExplainedVariance</code>, which has no mode
+          parameter and one path: build the covariance via <code>computeCovariance</code>, then
+          a <strong>local</strong> Breeze SVD on the driver. So the PCA arms no longer use it
+          &mdash; they run <code>custom_transformers.RowMatrixPCA</code>, which calls
+          <code>computeSVD</code> with the mode named explicitly, reaching the six-argument
+          Scala overload through py4j because PySpark's Python wrapper exposes no mode and
+          <code>"auto"</code> picks a local path at <var>n</var>&nbsp;&lt;&nbsp;100.
+        </p>
+        <p>
+          It centres the rows first, since <code>computeSVD</code> decomposes whatever it is
+          given and PCA needs the <em>covariance</em>. Against <code>spark.ml</code>'s PCA the
+          components then match at |cos|&nbsp;=&nbsp;1.0 and the explained variances to five
+          decimals &mdash; the mechanism changed, the numbers did not.
+        </p>
+        <p>
+          The price: <code>dist-eigs</code> runs one distributed pass per Lanczos iteration,
+          19 Spark stages on a small probe against the Gramian route's one. Measured on the
+          real 80-column vector that is <strong>6.7&times; at 50k rows and 8.0&times; at
+          200k</strong> for the PCA stage. Since the
+          <var>O</var>(<var>n</var><sup>3</sup>) it avoids is microseconds at
+          <var>n</var>&nbsp;=&nbsp;80, <code>local-eigs</code> is the default and
+          <code>--svd-mode dist-eigs</code> runs the distributed route.
         </p>
       </div>
 

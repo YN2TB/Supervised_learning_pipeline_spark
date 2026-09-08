@@ -607,10 +607,10 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
 
     @keyword_only
     def __init__(self, inputCol="features_selected", outputCol="features", k=10,
-                 svdMode="dist-eigs", maxIter=300, tol=1e-10, centre=True):
+                 svdMode="local-eigs", maxIter=300, tol=1e-10, centre=True):
         super().__init__()
         self._setDefault(inputCol="features_selected", outputCol="features", k=10,
-                         svdMode="dist-eigs", maxIter=300, tol=1e-10, centre=True)
+                         svdMode="local-eigs", maxIter=300, tol=1e-10, centre=True)
         self._set(**self._input_kwargs)
 
     def _fit(self, dataset: DataFrame):

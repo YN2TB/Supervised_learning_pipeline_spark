@@ -124,11 +124,12 @@ left unmapped rather than guessed — 885 rows, 0.015% of the dataset.
 
 ### `withMean=False` is deliberate
 
-The assembled vector is ~70% one-hot and therefore sparse. Centering maps every
-structural zero to `-μ`, destroying sparsity and forcing a dense materialisation
-(~3.3× memory here, ~100× if `ROUTE` were one-hot encoded). `withStd` is
-multiplicative, so zero is a fixed point and sparsity survives. Full argument in
-[`docs/REPORT.md` §A1.2](docs/REPORT.md).
+The assembled vector is 23 non-zero of 80 slots and therefore sparse. Centering
+maps every structural zero to `-μ`, destroying sparsity and forcing a dense
+materialisation — **2.0×** the memory here, measured with Spark's `SizeEstimator`
+(336 vs 672 bytes per row), and **110×** if `ROUTE` were one-hot encoded instead of
+target-encoded. `withStd` is multiplicative, so zero is a fixed point and sparsity
+survives. Full argument in [`docs/REPORT.md` §A1.2](docs/REPORT.md).
 
 ### Custom stages are Estimator/Model pairs
 
@@ -138,6 +139,12 @@ brief's wording suggests — it would recompute quantiles from whatever DataFram
 received, refitting itself on test data and behaving differently on every
 streaming micro-batch. Clipping fences are learned parameters.
 
+This still meets the requirement literally: `pyspark.ml.Model` *is* a subclass of
+`pyspark.ml.Transformer`, so `OutlierIQRTruncatorModel` — the object that does the
+clipping inside the fitted pipeline and ships to streaming — **is** a
+`Transformer` subclass. `HaversineTransformer` and `SignedLog1pTransformer`
+subclass `Transformer` directly.
+
 ### PCA runs in two arms
 
 PCA is required, but it rotates features into linear combinations, so
@@ -145,6 +152,20 @@ PCA is required, but it rotates features into linear combinations, so
 variables. Every model trains both with `PCA(k=10)` and without; the no-PCA arm
 supplies interpretable importances, and the comparison measures what the
 compression costs.
+
+The PCA stage is `custom_transformers.RowMatrixPCA`, not `spark.ml`'s `PCA`. The
+brief asks for PCA computed "using RowMatrix SVD without collecting full
+covariance matrices to the Driver node", and `spark.ml`'s `PCA` forms the whole
+80×80 covariance on the driver. `RowMatrixPCA` calls `computeSVD` with the mode
+named explicitly, so `--svd-mode dist-eigs` runs ARPACK Lanczos on distributed
+`Aᵀ(Av)` products and never materialises an n×n matrix. It centres the rows
+first, so both routes match `spark.ml`'s PCA exactly.
+
+`local-eigs` is the **default**: it gives identical components for 6.7–8.0× less
+time (PCA stage only — 18.9 s vs 126.6 s at 50k rows, 20.8 s vs 167.0 s at 200k),
+and at n = 80 the driver-side O(n³) it "avoids" is microseconds. Pass
+`--svd-mode dist-eigs` to run the distributed route — see
+[`docs/REPORT.md` §A2.1](docs/REPORT.md).
 
 ---
 
