@@ -403,6 +403,10 @@ thead th {
   border-bottom: 1px solid var(--rule-firm);
 }
 
+/* the row a table exists to make - uses the accent wash, both themes */
+tr.win > td { background: var(--accent-sf); }
+tr.win > td:first-child { font-weight: 600; }
+
 tbody tr:last-child td { border-bottom: none; }
 
 td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .84rem; }
@@ -499,11 +503,13 @@ html { scroll-behavior: smooth; }
 
 <header class="masthead">
   <div class="masthead-inner">
-    <p class="eyebrow">Part A &middot; Mathematical foundations</p>
+    <p class="eyebrow">Part A &middot; Mathematical foundations &amp; architecture</p>
     <h1>Distributed MLlib Mechanics</h1>
     <p class="standfirst">
       Why scaling, PCA and ensemble construction behave differently when the data
       does not fit on one machine &mdash; derived, then measured against 5.7&nbsp;million flights.
+      Then the architecture half: what MLlib's objects actually are, and what happens to a
+      single flight as it moves through thirteen stages.
     </p>
     <dl class="facts">
       <div class="fact"><dt>Rows</dt><dd>5,704,000</dd></div>
@@ -537,6 +543,12 @@ html { scroll-behavior: smooth; }
       <li><a href="#a34"><span class="n">A3.4</span> <span>Random Forest &mdash; bagging and parallel growth</span></a></li>
       <li><a href="#a35"><span class="n">A3.5</span> <span>Gradient-Boosted Trees &mdash; sequential residual fitting</span></a></li>
       <li><a href="#a36"><span class="n">A3.6</span> <span>The trade-off, and what the data said</span></a></li>
+      <li class="top"><a href="#b"><span class="n">B</span> <span>How it runs in Spark</span></a></li>
+      <li><a href="#b1"><span class="n">B1</span> <span>The MLlib contract</span></a></li>
+      <li><a href="#b2"><span class="n">B2</span> <span>The pipeline, end to end</span></a></li>
+      <li><a href="#b3"><span class="n">B3</span> <span>How the data changes shape</span></a></li>
+      <li><a href="#b4"><span class="n">B4</span> <span>What every slot means</span></a></li>
+      <li><a href="#b5"><span class="n">B5</span> <span>RowMatrixPCA, step by step</span></a></li>
     </ol>
   </nav>
 
@@ -607,11 +619,42 @@ html { scroll-behavior: smooth; }
       <div class="finding">
         <p class="finding-head">Concrete on this dataset</p>
         <p>
-          <code>DEPARTURE_DELAY</code> has a maximum near <strong>1,650&nbsp;minutes</strong>
-          against a median of <strong>&minus;2</strong>. Min&ndash;max scaling would crush
-          almost the entire distribution into roughly the first <strong>2%</strong> of the
-          range, leaving the models to separate ordinary flights inside a sliver of the
-          available numeric space.
+          <code>DEPARTURE_DELAY</code> runs from &minus;82 to <strong>1,988&nbsp;minutes</strong>
+          &mdash; one aircraft delayed 33.1 hours &mdash; against a median of
+          <strong>&minus;2</strong>. Min&ndash;max divides every ordinary flight by a range
+          that single row set: <strong>85.6%</strong> of all 5.7M flights land below 0.05,
+          98.1% below 0.10, and just <strong>43 rows</strong> sit above 0.7.
+        </p>
+      </div>
+
+      <div class="finding">
+        <p class="finding-head">Why this reaches the ElasticNet arm</p>
+        <p>
+          The compression is not uniform &mdash; each column is squeezed by whatever outlier
+          it happens to carry. Interquartile span as a fraction of each column's own scale:
+        </p>
+        <div class="tw"><table>
+          <thead><tr><th>column</th><th class="num">min&ndash;max</th><th class="num">x&thinsp;/&thinsp;&sigma;</th></tr></thead>
+          <tbody>
+            <tr><td><code>DEPARTURE_DELAY</code></td><td class="num"><strong>0.0058</strong></td><td class="num">0.325</td></tr>
+            <tr><td><code>TAXI_OUT</code></td><td class="num">0.0357</td><td class="num">0.901</td></tr>
+            <tr><td><code>DISTANCE</code></td><td class="num">0.1399</td><td class="num">1.138</td></tr>
+            <tr><td><code>SCHEDULED_TIME</code></td><td class="num">0.1257</td><td class="num">1.168</td></tr>
+            <tr class="win"><td>widest : narrowest</td><td class="num"><strong>24&times;</strong></td><td class="num"><strong>3.6&times;</strong></td></tr>
+          </tbody>
+        </table></div>
+        <p>
+          Under min&ndash;max, <code>DEPARTURE_DELAY</code> &mdash; the most predictive feature
+          in the dataset, <var>r</var>&nbsp;=&nbsp;0.9446 &mdash; gets a usable range
+          <strong>24&times; narrower</strong> than <code>DISTANCE</code>, purely because of one
+          33-hour delay. The ElasticNet penalty charges every coefficient at the same rate
+          regardless of its feature's scale, so a feature compressed by a factor <var>c</var>
+          needs its coefficient to grow by 1/<var>c</var> for the same effect &mdash; and is then
+          billed 1/<var>c</var> times harder under L1 and 1/<var>c</var><sup>2</sup> under L2.
+          Min&ndash;max would regularise the best feature toward zero ~24&times; (L1) or
+          ~576&times; (L2) faster than <code>DISTANCE</code>, for reasons unconnected to its
+          predictive value. Standardisation sets every &sigma; to 1, so the penalty compares
+          like with like.
         </p>
       </div>
 
@@ -801,7 +844,7 @@ html { scroll-behavior: smooth; }
       <p>
         PCA needs the eigendecomposition of the covariance of an
         <var>m</var>&nbsp;&times;&nbsp;<var>n</var> matrix &mdash; here
-        <var>m</var>&nbsp;=&nbsp;5,704,000 and <var>n</var>&nbsp;=&nbsp;80. The essential
+        <var>m</var>&nbsp;=&nbsp;5,704,000 and <var>n</var>&nbsp;=&nbsp;77. The essential
         asymmetry is that <strong><var>m</var> is enormous and <var>n</var> is small</strong>,
         and Spark's design follows entirely from it.
       </p>
@@ -868,7 +911,7 @@ html { scroll-behavior: smooth; }
             <rect x="432" y="76" width="184" height="56" fill="var(--accent-sf)" stroke="var(--accent)"/>
             <text x="524" y="98" text-anchor="middle" fill="var(--ink)" font-weight="500">driver</text>
             <text x="524" y="115" text-anchor="middle" fill="var(--muted)">local Breeze SVD &mdash; O(n&#179;)</text>
-            <text x="524" y="152" text-anchor="middle" fill="var(--faint)">~51 KB crosses the network</text>
+            <text x="524" y="152" text-anchor="middle" fill="var(--faint)">~46 KB crosses the network</text>
             <text x="524" y="168" text-anchor="middle" fill="var(--faint)">the m&#215;n data never does</text>
           </g>
         </svg>
@@ -908,10 +951,21 @@ html { scroll-behavior: smooth; }
           The price: <code>dist-eigs</code> runs one distributed pass per Lanczos iteration,
           19 Spark stages on a small probe against the Gramian route's one. Measured on the
           real 80-column vector that is <strong>6.7&times; at 50k rows and 8.0&times; at
-          200k</strong> for the PCA stage. Since the
-          <var>O</var>(<var>n</var><sup>3</sup>) it avoids is microseconds at
-          <var>n</var>&nbsp;=&nbsp;80, <code>local-eigs</code> is the default and
-          <code>--svd-mode dist-eigs</code> runs the distributed route.
+          200k</strong> for the PCA stage. We ship it as the default regardless, because it
+          is the only mode that satisfies the specification's wording &mdash;
+          <code>local-eigs</code> and <code>local-svd</code> both call
+          <code>computeGramianMatrix</code>.
+        </p>
+        <p>
+          The case for the cheaper mode is that at <var>n</var>&nbsp;=&nbsp;77 the covariance
+          is 46&nbsp;KB &mdash; but that argument picks an algorithm from the size of one
+          sample. The width is 80 only because <code>ROUTE</code> is target-encoded: one-hot
+          it instead and <var>n</var>&nbsp;=&nbsp;4,703 with a <strong>169&nbsp;MB</strong>
+          covariance; add <code>TAIL_NUMBER</code> and it is 9,599 and
+          <strong>703&nbsp;MB</strong> on the driver, which is a crash rather than a slow
+          path. <code>dist-eigs</code> holds one 616-byte vector at any width. The
+          6.7&ndash;8.0&times; buys the removal of that cliff, not speed &mdash;
+          <code>--svd-mode local-eigs</code> stays available for iteration.
         </p>
       </div>
 
@@ -959,7 +1013,7 @@ html { scroll-behavior: smooth; }
         <p class="finding-head">Measured &mdash; and unflattering to PCA</p>
         <p>
           Ten components retain only <strong>28.5%</strong> of the variance of the
-          80-dimensional space, and the cost lands directly on the models: linear regression
+          77-dimensional space, and the cost lands directly on the models: linear regression
           scores <var>R</var><sup>2</sup> = <strong>0.9289</strong> on the full feature set
           against <strong>0.7034</strong> through <code>PCA(k=10)</code>.
         </p>
@@ -1305,9 +1359,12 @@ html { scroll-behavior: smooth; }
         predictor rotated into a discarded component, whereas a tree can partially reconstruct
         the signal from whichever surviving components correlate with it. PCA is required by
         the brief, is defensible as decorrelation and compression &mdash; and here costs
-        accuracy in every single arm while also destroying feature-importance
-        interpretability. The two-arm design is what makes that visible rather than hiding it
-        behind one reported number.
+        accuracy in six of the seven paired arms while also destroying feature-importance
+        interpretability. The seventh is the Poisson GLM, which <em>improves</em>
+        (&minus;0.036&nbsp;&rarr;&nbsp;0.531): that arm is broken by its log link rather than
+        by its features, and removing information simply lets it fail less badly. The two-arm
+        design is what makes all of this visible rather than hiding it behind one reported
+        number.
       </p>
 
       <div class="closing">
@@ -1324,11 +1381,243 @@ html { scroll-behavior: smooth; }
         </p>
       </div>
     </section>
+
+    <section id="b">
+      <div class="sec-open">
+        <span class="tag">Part B</span>
+        <h2>How it runs in Spark</h2>
+      </div>
+
+      <p>
+        Everything above is mathematics that would be true in any framework. This part is
+        the half that is <em>only</em> true in Spark: what MLlib's objects actually are, what
+        happens to a flight as it moves through thirteen stages, and why the shape of the
+        data changes the way it does.
+      </p>
+
+      <h3 id="b1"><span class="tag">B1</span> The MLlib contract</h3>
+
+      <p>
+        Three types carry the whole API, and the distinction between them is the thing that
+        makes leakage structurally impossible rather than merely discouraged.
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <caption>The three MLlib types</caption>
+          <thead>
+            <tr><th>Type</th><th>Has</th><th>Holds state?</th><th>Example here</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><strong>Transformer</strong></td><td><code>transform(df)</code></td><td>no &mdash; pure function of a row</td><td><code>HaversineTransformer</code></td></tr>
+            <tr><td><strong>Estimator</strong></td><td><code>fit(df)</code> &rarr; Model</td><td>no &mdash; it <em>learns</em> one</td><td><code>TargetEncoder</code></td></tr>
+            <tr><td><strong>Model</strong></td><td><code>transform(df)</code></td><td><strong>yes &mdash; frozen at fit time</strong></td><td><code>TargetEncoderModel</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="finding">
+        <p class="finding-head">The detail that does the work</p>
+        <p>
+          <code>Model</code> is a <em>subclass of</em> <code>Transformer</code>. So an
+          Estimator/Model pair still satisfies &ldquo;subclass <code>Transformer</code>&rdquo;
+          &mdash; while making it impossible to recompute learned state at
+          <code>transform</code> time, because a Model has no <code>fit</code> to call.
+          Quantiles, category means and standard deviations are frozen the moment
+          <code>fit</code> returns. <strong>The test split physically cannot influence
+          them.</strong>
+        </p>
+      </div>
+
+      <p>
+        A <code>Pipeline</code> is itself an Estimator; <code>fit</code> returns a
+        <code>PipelineModel</code>, which is a Transformer. That recursion is why the whole
+        thirteen-stage chain saves as one object and reloads with every learned number intact.
+      </p>
+
+      <div class="plate">
+        <div class="plate-label">Where Spark differs from scikit-learn</div>
+        <div class="plate-note">
+          <p>
+            In scikit-learn, <code>transform()</code> returns transformed data. In Spark it
+            returns a <strong>new DataFrame describing a plan</strong> &mdash; nothing has been
+            computed. Catalyst folds all thirteen stages into one optimised job, and the work
+            begins only when an <em>action</em> demands a result.
+          </p>
+          <p>
+            This is why a bug can sit silent for twenty lines and then surface all at once, and
+            why <code>fit()</code> is where every distributed pass actually happens. It is also
+            why stage order matters for correctness but not for I/O: the rows are read once.
+          </p>
+        </div>
+      </div>
+
+      <h3 id="b2"><span class="tag">B2</span> The pipeline, end to end</h3>
+
+      <p>
+        Thirteen stages, in a fixed order. Most of them cannot move &mdash; the reason is in
+        the last column.
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <caption>The fitted pipeline, in execution order</caption>
+          <thead>
+            <tr><th></th><th>Stage</th><th>Kind</th><th>Why it sits here</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="num">00</td><td><code>OutlierIQRTruncator</code></td><td>Estimator</td><td>clip before anything derives from the column</td></tr>
+            <tr><td class="num">01</td><td><code>HaversineTransformer</code></td><td>Transformer</td><td>needs raw lat/lon, untouched</td></tr>
+            <tr><td class="num">02</td><td><code>SignedLog1pTransformer</code></td><td>Transformer</td><td>after haversine &mdash; it compresses that output too</td></tr>
+            <tr><td class="num">03</td><td><code>Imputer</code></td><td>Estimator</td><td>derived ratios can be null where raw columns were not</td></tr>
+            <tr><td class="num">04</td><td><code>TargetEncoder</code></td><td>Estimator</td><td>reads the label, so it must run <em>inside</em> the fold</td></tr>
+            <tr><td class="num">05</td><td><code>StringIndexer</code></td><td>Estimator</td><td>the encoder consumes indices, not strings</td></tr>
+            <tr><td class="num">06</td><td><code>OneHotEncoder</code></td><td>Estimator</td><td>after indexing</td></tr>
+            <tr><td class="num">07</td><td><code>MaterializeCache</code></td><td>Estimator</td><td>where every feature column finally exists</td></tr>
+            <tr><td class="num">08</td><td><code>VectorAssembler</code></td><td>Transformer</td><td>columns become slots</td></tr>
+            <tr><td class="num">09</td><td><code>StandardScaler</code></td><td>Estimator</td><td><strong>after</strong> assembly &mdash; it scales a vector, not columns</td></tr>
+            <tr><td class="num">10</td><td><code>VarianceThresholdSelector</code></td><td>Estimator</td><td><strong>before</strong> PCA &mdash; zero-variance slots make the covariance singular</td></tr>
+            <tr><td class="num">11</td><td><code>RowMatrixPCA</code> <em>or</em> a rename</td><td>Estimator</td><td>the arm switch; both branches emit <code>features</code></td></tr>
+            <tr><td class="num">12</td><td>the estimator</td><td>Estimator</td><td>one definition serves either arm</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>
+        Note the ratio: <strong>nine of the thirteen are Estimators</strong>. Nine stages
+        learn something from the training split and freeze it. That is what makes the saved
+        model 253&nbsp;KB of learned numbers rather than a script to be re-run.
+      </p>
+
+      <h3 id="b3"><span class="tag">B3</span> How the data changes shape</h3>
+
+      <p>
+        A single flight enters as a CSV line and leaves as one number. The width changes six
+        times on the way, and every change has a reason.
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <caption>One flight, seven shapes</caption>
+          <thead>
+            <tr><th>Stage</th><th class="num">Width</th><th>What it holds</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>raw <code>flights.csv</code></td><td class="num">31</td><td>the feed as published &mdash; 5,819,079 rows</td></tr>
+            <tr><td>curated Parquet</td><td class="num">29</td><td>15 leak/filter columns dropped, lat&thinsp;/&thinsp;lon joined in, time columns and both labels derived &mdash; 5,704,000 rows</td></tr>
+            <tr><td>after feature stages</td><td class="num">24</td><td>the <code>VectorAssembler</code> input list: 20 numeric columns + 4 one-hot vector columns</td></tr>
+            <tr class="win"><td><code>features_raw</code></td><td class="num"><strong>80</strong></td><td>one vector per row &mdash; the one-hot blocks expand 4 columns into 60 slots</td></tr>
+            <tr><td><code>features_scaled</code></td><td class="num">80</td><td>same shape; each slot divided by its own &sigma;</td></tr>
+            <tr><td><code>features_selected</code></td><td class="num"><strong>77</strong></td><td>three slots that no row can ever set are dropped</td></tr>
+            <tr><td><code>features</code> (PCA arm)</td><td class="num"><strong>10</strong></td><td>projected onto the top ten principal directions &mdash; 28.5% of the variance</td></tr>
+            <tr><td><code>prediction</code></td><td class="num">1</td><td>minutes of arrival delay</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="finding">
+        <p class="finding-head">The counter-intuitive step</p>
+        <p>
+          Feature engineering makes the data <em>wider</em> before anything makes it narrower:
+          24 columns become 80 slots. One-hot encoding is the reason &mdash; four categorical
+          columns become sixty indicator slots, of which exactly four are set per row. The
+          vector is <strong>28.75% dense</strong>, and that sparsity is precisely what
+          <span class="v">withMean=False</span> exists to protect (A1.2).
+        </p>
+      </div>
+
+      <h3 id="b4"><span class="tag">B4</span> What every slot means</h3>
+
+      <p>
+        &ldquo;An 80-dimensional vector&rdquo; is not one thing &mdash; it is five blocks laid
+        end to end. Verified slot by slot against six real flights:
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <caption>The 80 slots, by block</caption>
+          <thead>
+            <tr><th>Slots</th><th class="num">Width</th><th>Block</th><th>What one slot is</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="num">0&ndash;19</td><td class="num">20</td><td>numeric features</td><td>a real number &mdash; delay, distance, a target-encoded route mean, a coordinate</td></tr>
+            <tr><td class="num">20&ndash;34</td><td class="num">15</td><td><code>AIRLINE</code></td><td>1 if this flight is that carrier, else 0</td></tr>
+            <tr><td class="num">35&ndash;47</td><td class="num">13</td><td><code>MONTH</code></td><td>1 if this flight is in that month</td></tr>
+            <tr><td class="num">48&ndash;55</td><td class="num">8</td><td><code>DAY_OF_WEEK</code></td><td>1 if this flight is on that weekday</td></tr>
+            <tr><td class="num">56&ndash;79</td><td class="num">24</td><td><code>DEP_HOUR</code></td><td>1 if scheduled departure falls in that hour</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="finding">
+        <p class="finding-head">Thirteen slots for twelve months</p>
+        <p>
+          <code>OneHotEncoder</code> infers its category count from the <em>largest value it
+          observes</em> and has no way to know the values start at 1. A maximum of 12 makes it
+          assume indices 0&hellip;12 &mdash; thirteen categories &mdash; and reserve a slot for
+          a month that cannot exist. <code>DAY_OF_WEEK</code> is the same (7&nbsp;&rarr;&nbsp;8);
+          <code>DEP_HOUR</code> escapes it because hour&nbsp;0 is midnight and genuinely occurs.
+        </p>
+        <p>
+          Those two dead slots, plus the <code>StringIndexer</code> bucket reserved for an
+          unseen airline, are exactly the <strong>three columns</strong>
+          <code>VarianceThresholdSelector</code> removes &mdash; which is where
+          80&nbsp;&rarr;&nbsp;77 comes from, and why PCA decomposes a 77&times;77 covariance
+          rather than an 80&times;80 one.
+        </p>
+      </div>
+
+      <h3 id="b5"><span class="tag">B5</span> RowMatrixPCA, step by step</h3>
+
+      <p>
+        A2.1 established <em>that</em> the covariance never reaches the driver. This is the
+        loop that achieves it. ARPACK uses <strong>reverse communication</strong>: it is never
+        handed a matrix, only asked to be handed a product.
+      </p>
+
+      <div class="table-wrap">
+        <table>
+          <caption>One Lanczos iteration</caption>
+          <thead>
+            <tr><th></th><th>Where</th><th>What happens</th><th>Data moved</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="num">1</td><td>driver</td><td><code>dsaupd</code> yields a vector <var>v</var> and asks for <var>A</var><sup>&#8868;</sup><var>A&thinsp;v</var></td><td>&mdash;</td></tr>
+            <tr><td class="num">2</td><td>&rarr; executors</td><td><var>v</var> is broadcast</td><td class="num">616 B</td></tr>
+            <tr><td class="num">3</td><td>each partition</td><td>accumulates &Sigma;&thinsp;<var>a<sub>i</sub></var>(<var>a<sub>i</sub></var><sup>&#8868;</sup><var>v</var>) over <em>its own rows</em></td><td>rows never move</td></tr>
+            <tr><td class="num">4</td><td>tree reduce</td><td><code>treeAggregate</code> merges the partial vectors pairwise</td><td class="num">616 B each</td></tr>
+            <tr><td class="num">5</td><td>&rarr; driver</td><td>one vector returns; <code>dsaupd</code> produces the <em>next</em> <var>v</var></td><td class="num">616 B</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="finding">
+        <p class="finding-head">Two things this table is claiming</p>
+        <p>
+          <strong>The largest object on any machine, at any moment, is a 616-byte vector.</strong>
+          There is nowhere for an <var>n</var>&times;<var>n</var> matrix to exist. That is the
+          literal reading of the specification's &ldquo;without collecting full covariance
+          matrices to the Driver node&rdquo;.
+        </p>
+        <p>
+          <strong>The loop is not a batch loader.</strong> Every iteration scans all 5,704,000
+          rows and returns a <em>complete</em> product. Nothing is partial and nothing carries
+          over; the only thing that differs between turns is <var>v</var>. Iteration is
+          required because eigenvectors have no closed form &mdash; not because the data is
+          being consumed in pieces.
+        </p>
+        <p>
+          That is also the cost: ~19 iterations means ~19 full passes, which is the measured
+          6.7&ndash;8.0&times; against the Gramian route.
+        </p>
+      </div>
+
+    </section>
   </main>
 </div>
 
 <footer>
-  Part A &middot; Advanced PySpark MLlib &middot; 2015 US DOT on-time performance
+  Part A &middot; Mathematical foundations &amp; architecture &middot; 2015 US DOT on-time performance
 </footer>
 
 <script>

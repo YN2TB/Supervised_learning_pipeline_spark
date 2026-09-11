@@ -103,6 +103,10 @@ ONEHOT_NUMERIC = ["MONTH", "DAY_OF_WEEK", "DEP_HOUR"]
 def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
                          svd_mode: str = "dist-eigs"):
     """Shared preprocessing. Returns (stages, assembler_input_names)."""
+    # svd_mode must stay in step with the --svd-mode CLI default. They disagreed
+    # once, and the only caller that omits the argument is
+    # scripts/profile_stages.py, which therefore profiled a mode the pipeline
+    # itself never ran.
     stages = []
 
     stages.append(OutlierIQRTruncator(inputCols=CLIP_COLS, outputCols=CLIP_OUT,
@@ -140,13 +144,20 @@ def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
     stages.append(StandardScaler(inputCol="features_raw", outputCol="features_scaled",
                                  withMean=False, withStd=True))
 
-    # One-hot encoding with handleInvalid="keep" reserves a slot for unseen
-    # categories, and on any split where that slot never fires the column is
-    # constant. StandardScaler maps a zero-variance column to all zeros, which
-    # leaves the covariance matrix singular - and Spark's PCA runs a Breeze SVD
-    # over exactly that matrix, so it fails outright with NotConvergedException
-    # rather than degrading. Dropping zero-variance columns first is both the
-    # fix and the right thing to do: a constant feature carries no information.
+    # Three of the 80 assembled slots are constant, for two different reasons.
+    # (a) StringIndexer(handleInvalid="keep") reserves index 14 for an unseen
+    #     AIRLINE; training contains all 14 carriers, so it never fires here.
+    # (b) MONTH and DAY_OF_WEEK are 1-INDEXED, and OneHotEncoder sizes itself
+    #     from the largest value it sees - a max of 12 means it assumes indices
+    #     0..12, i.e. 13 slots for 12 months, reserving one for a month that
+    #     cannot exist. Same for DAY_OF_WEEK (7 -> 8). DEP_HOUR is unaffected
+    #     because hour 0 is real. Verified: slots 34, 35, 48.
+    # Either way the column is constant, and StandardScaler maps a zero-variance
+    # column to all zeros, which leaves the covariance matrix singular - and
+    # Spark's PCA runs a Breeze SVD over exactly that matrix, so it fails
+    # outright with NotConvergedException rather than degrading. Dropping
+    # zero-variance columns first is both the fix and the right thing to do:
+    # a constant feature carries no information.
     stages.append(VarianceThresholdSelector(
         featuresCol="features_scaled", outputCol="features_selected",
         varianceThreshold=0.0))
@@ -155,7 +166,7 @@ def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
         # RowMatrixPCA, not spark.ml's PCA. The brief asks for PCA computed
         # "using RowMatrix SVD without collecting full covariance matrices to
         # the Driver node", and spark.ml's PCA does the opposite: it forms the
-        # whole 80x80 covariance on the driver. RowMatrixPCA calls
+        # whole 77x77 covariance on the driver. RowMatrixPCA calls
         # RowMatrix.computeSVD with an explicit mode, so dist-eigs drives ARPACK
         # Lanczos on distributed A^T(Av) products and no n x n matrix is ever
         # materialised. See custom_transformers.RowMatrixPCA for the caveats -
@@ -387,13 +398,15 @@ def main() -> None:
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--parallelism", type=int, default=4)
     ap.add_argument("--pca-k", type=int, default=10)
-    ap.add_argument("--svd-mode", default="local-eigs",
+    ap.add_argument("--svd-mode", default="dist-eigs",
                     choices=["auto", "local-svd", "local-eigs", "dist-eigs"],
-                    help="RowMatrix.computeSVD mode for the PCA arms. dist-eigs "
-                         "never materialises the n x n covariance (ARPACK Lanczos on "
-                         "distributed A^T(Av) products) but costs 6.7-8.0x more; "
-                         "local-eigs forms the Gramian on the driver, which at n=80 "
-                         "is microseconds. Both give identical components.")
+                    help="RowMatrix.computeSVD mode for the PCA arms. Default "
+                         "dist-eigs never materialises the n x n covariance (ARPACK "
+                         "Lanczos on distributed A^T(Av) products), which is what the "
+                         "brief asks for; local-eigs and local-svd both form the "
+                         "Gramian on the driver and run 6.7-8.0x faster at n=77. All "
+                         "give identical components, so use local-eigs when you are "
+                         "iterating and do not need the distributed route.")
     ap.add_argument("--models", default="all")
     ap.add_argument("--experiment", default="flight-delay-mllib")
     ap.add_argument("--resume", dest="resume", action="store_true", default=True,

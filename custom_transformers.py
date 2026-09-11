@@ -607,10 +607,15 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
 
     @keyword_only
     def __init__(self, inputCol="features_selected", outputCol="features", k=10,
-                 svdMode="local-eigs", maxIter=300, tol=1e-10, centre=True):
+                 svdMode="dist-eigs", maxIter=300, tol=1e-10, centre=True):
         super().__init__()
+        # dist-eigs is the default because it is the only mode that satisfies the
+        # brief's "without collecting full covariance matrices to the Driver node":
+        # local-eigs and local-svd both call computeGramianMatrix. It costs
+        # 6.7-8.0x more on the PCA stage for identical components - pass
+        # svdMode="local-eigs" when you want the cheap Gramian path.
         self._setDefault(inputCol="features_selected", outputCol="features", k=10,
-                         svdMode="local-eigs", maxIter=300, tol=1e-10, centre=True)
+                         svdMode="dist-eigs", maxIter=300, tol=1e-10, centre=True)
         self._set(**self._input_kwargs)
 
     def _fit(self, dataset: DataFrame):

@@ -29,9 +29,51 @@ $$x^{\text{scaled}}_{ij} = \frac{x_{ij} - x^{\min}_j}{x^{\max}_j - x^{\min}_j}\l
 The output range is guaranteed, which suits bounded activations and distance
 kernels, but the mapping is defined by two order statistics. A single extreme
 value sets $x^{\max}_j$ and compresses every ordinary observation into a narrow
-band near zero. On this dataset that failure is concrete: `DEPARTURE_DELAY` has a
-maximum near 1,650 minutes against a median of −2, so min–max scaling would crush
-almost the entire distribution into roughly the first 2% of the range.
+band near zero. On this dataset that failure is concrete. `DEPARTURE_DELAY`
+runs from −82 to **1,988** minutes — one aircraft delayed 33.1 hours — against a
+median of −2, so every ordinary flight is divided by a range of 2,070 that a single
+row set:
+
+| after min–max | rows | share |
+|---|---|---|
+| 0.00 – 0.05 | 4,881,237 | **85.58%** |
+| 0.05 – 0.10 | 715,346 | 12.54% |
+| 0.10 – 0.70 | 107,372 | 1.88% |
+| 0.70 – 1.00 | **43** | 0.0008% |
+
+The middle 50% of all 5.7M flights occupies **0.58%** of the $[0,1]$ scale and the
+middle 98% occupies 8.70%. Delete that one row and every other value on the scale
+moves.
+
+**Why this reaches the ElasticNet arm.** The compression is not uniform across
+columns — each is squeezed by whatever outlier it happens to carry — and that
+asymmetry is what does the damage. Interquartile span as a fraction of each
+column's own post-scaling scale:
+
+| column | min–max | $x/\sigma$ |
+|---|---|---|
+| `DEPARTURE_DELAY` | **0.0058** | 0.325 |
+| `TAXI_OUT` | 0.0357 | 0.901 |
+| `DISTANCE` | 0.1399 | 1.138 |
+| `SCHEDULED_TIME` | 0.1257 | 1.168 |
+| widest : narrowest | **24$\times$** | **3.6$\times$** |
+
+Under min–max, `DEPARTURE_DELAY` — the most predictive feature in the dataset,
+$r = 0.9446$ — would occupy a usable range 24$\times$ narrower than `DISTANCE`,
+purely because of one 33-hour delay. The ElasticNet penalty
+$\lambda\left[\alpha\lVert\beta\rVert_1 + \frac{1-\alpha}{2}\lVert\beta\rVert_2^2\right]$
+charges every coefficient at the same rate regardless of its feature's scale. If
+feature $j$ is compressed by a factor $c$, then $\beta_j$ must grow by $1/c$ to make
+the same contribution to $\hat{y}$ — and the penalty bills that inflated coefficient,
+$1/c$ times harder under $\ell_1$ and $1/c^2$ under $\ell_2$. Min–max would therefore
+shrink the single most informative feature toward zero roughly 24$\times$ (L1) or
+576$\times$ (L2) faster than `DISTANCE`, for reasons unconnected to predictive value.
+
+Standardisation sets every $\sigma_j = 1$ by construction, so the penalty compares
+coefficients that are genuinely comparable; the residual 3.6$\times$ spread above
+reflects real differences in distribution shape rather than outlier accidents. This
+is the practical reason a regularised model wants standardised inputs, and why the
+pipeline uses `StandardScaler` (§B3).
 
 Both are affine in $x$, so neither changes the *shape* of a distribution — neither
 one fixes skew. That is what A1.3 is for.
@@ -87,8 +129,39 @@ handled by fitting an intercept, which absorbs the uncentred mean.
 
 ### A1.3 Robust scaling: log compression before standardisation
 
-Affine scaling cannot fix skew. `DISTANCE`, `SCHEDULED_TIME` and the delay columns
-are heavily right-skewed, so we compress first:
+Affine scaling cannot fix skew (A1.1), so a *nonlinear* map is required. Requiring
+it to be monotone (rank must survive) and concave on $x>0$ (large values must
+compress harder than small) still leaves a family — $\sqrt{x}$, $x^{1/3}$,
+$\ln x$, Box–Cox. The logarithm is not chosen from that family; it is forced by
+one further requirement.
+
+**Deriving the logarithm: variance stabilisation.** For a transform $g$, a
+first-order Taylor expansion about $\mu$ gives
+
+$$g(X) \approx g(\mu) + g'(\mu)(X-\mu) \quad\Longrightarrow\quad
+\operatorname{Var}\left(g(X)\right) \approx \left[g'(\mu)\right]^2\operatorname{Var}(X)$$
+
+Extreme right skew in positive data characteristically arises when spread grows
+with level — a constant coefficient of variation, $\operatorname{SD}(X) = c\mu$.
+Demanding that the transformed variance be constant regardless of level:
+
+$$\left[g'(\mu)\right]^2 c^2\mu^2 = k
+\quad\Longrightarrow\quad g'(\mu) \propto \frac{1}{\mu}
+\quad\Longrightarrow\quad g(\mu) = \ln\mu + \text{const}$$
+
+The logarithm is the unique solution up to an affine constant. (Box–Cox
+generalises this: $g'(\mu)\propto\mu^{-\lambda}$ yields the power family, and
+$\lambda\to0$ recovers exactly this case.)
+
+The same assumption explains *both* halves of the problem: if spread scales with
+level while the variable is bounded below by zero, the upper tail necessarily
+stretches — which **is** the skew. One condition produces the skew and identifies
+its remedy. The premise holds on this data ($\operatorname{CV}$ of `DISTANCE` is
+0.738), and the stabilisation is measurable: binned by level, the raw standard
+deviation of `DISTANCE` runs 68.9, 61.9, 77.0, 101.1, 493.3 across quintiles,
+while after $\ln(1+x)$ it runs 0.371, 0.144, 0.115, 0.102, 0.257.
+
+So we compress with
 
 $$x \mapsto \ln(1 + x)$$
 
@@ -106,9 +179,19 @@ extension (`SignedLog1pTransformer`):
 $$f(x) = \operatorname{sign}(x)\ln(1 + |x|)$$
 
 which is defined on all of $\mathbb{R}$, agrees with $\ln(1+x)$ for $x \ge 0$, is
-monotonic across zero, odd, and continuous with $f(0)=0$. It compresses both tails
-symmetrically, so a 3-hour early arrival and a 3-hour late arrival are compressed
-alike.
+monotonic across zero, odd, and continuous with $f(0)=0$. Its derivative
+$f'(x) = 1/(1+|x|) > 0$ everywhere confirms strict monotonicity on all of
+$\mathbb{R}$, so rank is preserved. It compresses both tails symmetrically, so a
+3-hour early arrival and a 3-hour late arrival are compressed alike.
+
+**And outliers.** The compression bounds leverage directly. A point's influence on
+a least-squares fit grows with its squared deviation $(x-\bar{x})^2$. The largest
+`DEPARTURE_DELAY` in the curated data is 1,988 minutes, giving
+$(x-\bar{x})^2 = 3.92\times10^{6}$ against a mean of 9.3. Under the signed log that
+same row contributes $5.63\times10^{1}$ — its influence on the fit falls by a factor
+of roughly **69,500**, without deleting it or capping it. That is the difference
+between compression and truncation: the row keeps its rank and its status as the
+most delayed flight in the year, but stops dominating the objective.
 
 **Truncation vs. compression, and a mistake worth recording.** These are
 different tools: Tukey truncation clips to fences $[Q_1 - 1.5\,\text{IQR},\,
@@ -162,7 +245,7 @@ wants truncation, where extreme values really are operational anomalies.
 ### A2.1 What is actually distributed
 
 PCA needs the eigen-decomposition of the covariance of an $m \times n$ matrix $A$,
-here $m = 5{,}704{,}000$ rows and $n = 80$ features. The essential asymmetry is
+here $m = 5{,}704{,}000$ rows and $n = 77$ features (the 80 assembled slots less the three that `VarianceThresholdSelector` drops, §B3). The essential asymmetry is
 that **$m$ is enormous and $n$ is small**, and Spark's design follows from it.
 
 The covariance requires the Gramian $A^\top A$, and that decomposes as a sum over
@@ -176,7 +259,7 @@ accumulating a local $n \times n$ matrix, and those partial sums are combined by
 partition count, so the driver receives $O(\log p)$ merges rather than $p$ of them.
 
 The important consequence: **the $m \times n$ data matrix is never collected.** Only
-an $n \times n$ summary — 80×80 here, ~51 KB — crosses the network per partial
+an $n \times n$ summary — 77×77 here, ~46 KB — crosses the network per partial
 aggregate. Communication is independent of $m$ entirely.
 
 That is the **Gramian route**, and it settles the *data*. It does not settle the
@@ -238,14 +321,43 @@ The gap widens with $m$, because `local-eigs` is dominated by fixed overhead whi
 `dist-eigs` pays per pass. Across the tournament — seven PCA arms, each refitted per
 fold and per grid point — that difference is several hours.
 
-**Both routes are implemented and verified to give identical components.**
-`--svd-mode dist-eigs` is the mechanism the specification describes and is the
-reason `RowMatrixPCA` exists; `local-eigs` is the **default**, because the analysis
-above is that at $n = 80$ the driver-side $O(n^3)$ is microseconds and forming the
-Gramian is the right engineering call. Defaulting to the distributed route would
-contradict our own conclusion in order to pay 6.7–8.0x for the same answer. The
-distributed route repays its extra passes only once $n$ is large enough that an
-$n \times n$ object on one machine genuinely hurts.
+**Both routes are implemented and verified to give identical components, and
+`dist-eigs` is the default.** It is the mechanism the specification names, and it
+is the only one of the three modes that satisfies the specification's wording
+literally: `local-svd` and `local-eigs` both call `computeGramianMatrix`, so under
+either of them the full $80 \times 80$ covariance is assembled on the Driver. Under
+`dist-eigs` no $n \times n$ object is ever formed, on the Driver or anywhere else.
+
+**Why that is the right default even though it is the slower one here.** The
+temptation is to argue from the measurement: at $n = 77$ the covariance is 46 KB
+and the driver-side $O(n^3)$ is microseconds, so `local-eigs` is 6.7–8.0x cheaper
+for an identical answer. That argument selects an algorithm from the size of one
+sample, and it is exactly the reasoning a distributed system should not be built
+on.
+
+$n = 77$ is not a property of this problem. It is a consequence of a single
+feature-engineering decision made two sections earlier — target-encoding `ROUTE`
+rather than one-hot encoding it (§A1.2, §B2). Reverse that one choice and the
+covariance stops being free:
+
+| feature treatment | $n$ | covariance $A^\top A$ | local $O(n^3)$ |
+|---|---|---|---|
+| as built, `ROUTE` target-encoded | 77 | 46 KB | $4.6 \times 10^5$ |
+| `ROUTE` one-hot instead | 4,703 | **169 MB** | $1.0 \times 10^{11}$ |
+| `TAIL_NUMBER` one-hot as well | 9,599 | **703 MB** | $8.8 \times 10^{11}$ |
+
+A 703 MB dense array on the Driver — before Breeze allocates its decomposition
+workspace — is not a throughput question but a failure mode, and it fails on the
+one node whose loss takes the whole application with it. The pipeline is one
+design decision away from that column, so a default chosen because *today's* $n$
+is 80 has hard-coded an assumption with no guard on it.
+
+`dist-eigs` has no such cliff: its working set on the Driver is a single
+$p$-vector, 616 bytes, whatever $n$ becomes. That is the property being bought,
+and the measured 6.7–8.0x on this dataset is its price at this scale — not a
+claim that it is faster here, which it is not. `--svd-mode local-eigs` remains
+available and is the sensible thing to pass while iterating, precisely because at
+$n = 77$ the two are interchangeable.
 
 ### A2.2 From SVD to principal components
 
@@ -268,7 +380,7 @@ The denominator equals $\operatorname{tr}(A^\top A) = \sum_j \operatorname{Var}(
 so with standardised inputs it is just $p$.
 
 **Measured, and the result is unflattering to PCA here.** Ten components retain
-only **28.5%** of the variance of the 80-dimensional feature space, and the cost
+only **28.5%** of the variance of the 77-dimensional feature space, and the cost
 shows up directly in the models: linear regression scores $R^2 = 0.9289$ on the
 full feature set against $0.7034$ through `PCA(k=10)`.
 
@@ -327,6 +439,35 @@ The $\ell_1$ term is not differentiable at zero; its subgradient is constant
 $\pm\lambda\alpha$, so it applies the same push regardless of coefficient size and
 drives small coefficients exactly to zero. That yields genuine sparsity —
 selection, not just shrinkage.
+
+**Why the zeros are exact: the soft-thresholding solution.** Minimise $J$ in one
+coordinate $\beta_j$ with the others held fixed. Writing the partial residual
+$r_i^{(-j)} = y_i - \sum_{k\neq j}x_{ik}\beta_k$ and
+$\rho_j = \frac{1}{n}\sum_i x_{ij}r_i^{(-j)}$, and using standardised predictors so
+that $\frac{1}{n}\sum_i x_{ij}^2 = 1$, the objective in $\beta_j$ is
+
+$$J(\beta_j) = \tfrac{1}{2}\beta_j^2 - \rho_j\beta_j
++ \tfrac{\lambda(1-\alpha)}{2}\beta_j^{2} + \lambda\alpha\lvert\beta_j\rvert
++ \text{const}$$
+
+For $\beta_j \neq 0$ the stationarity condition is
+$\beta_j\left(1+\lambda(1-\alpha)\right) - \rho_j + \lambda\alpha\operatorname{sign}(\beta_j) = 0$.
+At $\beta_j = 0$ the term $\lvert\beta_j\rvert$ has no derivative but a whole
+*subdifferential*, the interval $[-\lambda\alpha,\,\lambda\alpha]$, and $0$ is a
+minimiser exactly when $0$ lies in the subdifferential of $J$, i.e. when
+$\lvert\rho_j\rvert \le \lambda\alpha$. Combining the three cases:
+
+$$\hat{\beta}_j = \frac{S\!\left(\rho_j,\ \lambda\alpha\right)}{1 + \lambda(1-\alpha)},
+\qquad
+S(z,\gamma) = \operatorname{sign}(z)\max\left(\lvert z\rvert - \gamma,\ 0\right)$$
+
+This makes the division of labour explicit. The **numerator** is the $\ell_1$
+contribution: a *threshold*, and because the subdifferential at zero is an interval
+rather than a point, an entire range $\lvert\rho_j\rvert \le \lambda\alpha$ maps to
+exactly zero — that is the source of the sparsity, and it is why ridge cannot
+produce it. The **denominator** is the $\ell_2$ contribution: a uniform
+*shrinkage* factor that never reaches zero. Setting $\alpha = 0$ leaves
+$\hat{\beta}_j = \rho_j/(1+\lambda)$, which vanishes only if $\rho_j$ does.
 
 Setting $\alpha = 0$ gives ridge, $\alpha = 1$ gives lasso. The mixture matters
 here for a specific reason: lasso alone, given a group of correlated features,
@@ -390,16 +531,31 @@ separable, so slack variables $\xi_i \ge 0$ permit violations:
 $$\min_{w,b,\xi} \; \frac{1}{2}\lVert w\rVert^2 + C\sum_{i=1}^{n}\xi_i
 \quad\text{s.t.}\quad y_i\left(w^\top x_i + b\right) \ge 1 - \xi_i,\; \xi_i \ge 0$$
 
-The constraints are tight at the optimum, so $\xi_i = \max\left(0, 1 - y_i(w^\top x_i + b)\right)$,
-and substituting gives the unconstrained **hinge-loss** form:
+The slack variables can be eliminated. For fixed $(w,b)$ the objective is strictly
+increasing in each $\xi_i$, so at the optimum every $\xi_i$ is driven down to the
+smallest value its two constraints permit — $\xi_i \ge 1 - y_i(w^\top x_i + b)$ and
+$\xi_i \ge 0$ — giving
+$\xi_i^{\star} = \max\left(0,\, 1 - y_i(w^\top x_i + b)\right)$. Substituting
+$\xi^{\star}$ back removes the constraints entirely and yields the unconstrained
+**hinge-loss** form:
 
 $$\min_{w,b}\;\frac{1}{2}\lVert w\rVert^2 + C\sum_{i=1}^{n}\max\left(0,\,1 - y_i\left(w^\top x_i + b\right)\right)$$
 
-The hinge is zero once a point is correctly classified *beyond* the margin, which
-is what distinguishes it from log loss: correct, confident points contribute
-nothing to the gradient, so the solution depends only on the support vectors near
-the boundary. It is convex but non-smooth at the kink, so Spark optimises via
-subgradients (OWL-QN).
+**The support-vector property follows from the subgradient.** Write the functional
+margin $m_i = y_i(w^\top x_i + b)$. Since
+$\frac{\partial}{\partial w}\max(0, 1-m_i)$ is $0$ when $m_i > 1$, is $-y_i x_i$ when
+$m_i < 1$, and is any point of $[-y_i x_i,\, 0]$ at the kink $m_i = 1$, a
+subgradient of the objective is
+
+$$\partial_w = w - C\!\!\sum_{i\,:\,m_i < 1}\!\! y_i x_i$$
+
+Every point with $m_i > 1$ — correctly classified *and* beyond the margin — drops
+out of the sum entirely, contributing exactly nothing however far away it is. Only
+points on or inside the margin, or misclassified, appear at all: those are the
+support vectors, and the solution is a function of them alone. This is what
+distinguishes the hinge from log loss, where every point contributes a non-zero
+gradient forever. The objective is convex but non-smooth at the kink, so Spark
+optimises via subgradients (OWL-QN).
 
 **Spark's parameterisation differs from the textbook.** `LinearSVC` minimises the
 *averaged* loss with an $\ell_2$ penalty scaled by `regParam`:
@@ -835,7 +991,7 @@ This is the honest answer to the brief's parametric-vs-ensemble comparison: mode
 capacity beyond the true functional form buys nothing, and axis-aligned splits are
 a poor basis for a diagonal relationship.
 
-**PCA loses in all seven paired arms, without exception.** At $k = 10$ the
+**PCA loses in six of the seven paired arms.** At $k = 10$ the
 components retain only **28.5%** of total variance (§A2.2), and the damage tracks
 how much each model depends on the discarded directions:
 
@@ -847,13 +1003,24 @@ how much each model depends on the discarded directions:
 | gbt_classifier | 0.9817 | 0.9699 | −0.012 AUC |
 | linear_svc | 0.9806 | 0.9657 | −0.015 AUC |
 | random_forest_classifier | 0.9792 | 0.9635 | −0.016 AUC |
+| glm_poisson_log | −0.0357 | 0.5309 | **+0.567** $R^2$ |
 
 The linear model suffers most, by an order of magnitude. It has no way to recover a
 predictor that has been rotated into a discarded component, whereas a tree can
 partially reconstruct the signal from whichever surviving components correlate with
 it. This is the trade-off §B3 predicted, measured: PCA is required by the brief, it
 is defensible as decorrelation and compression, and here it costs accuracy in every
-single arm while also destroying `featureImportances` interpretability.
+arm that was working in the first place, while also destroying `featureImportances`
+interpretability.
+
+The one arm PCA *improves* is the Poisson GLM, and it is the exception that confirms
+the reading rather than complicating it. That arm is broken by its link function, not
+by its features (§B4 below): fed the raw `DEPARTURE_DELAY` column, an exponential link
+produces wildly overshooting predictions, which is how a regressor reaches $R^2$
+−0.036 — worse than predicting the mean. PCA's centred, rotated components present no
+single dominant column for the exponential to amplify, so the same broken model
+degrades more gracefully. A model improving when information is *removed* from it is a
+diagnosis of that model, not a defence of the transform.
 
 **Classification is a three-way tie decided on cost.** GBT (0.9817), LinearSVC
 (0.9806) and Random Forest (0.9792) are separated by 0.0025 AUC — well inside what

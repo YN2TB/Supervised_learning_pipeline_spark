@@ -156,15 +156,23 @@ compression costs.
 The PCA stage is `custom_transformers.RowMatrixPCA`, not `spark.ml`'s `PCA`. The
 brief asks for PCA computed "using RowMatrix SVD without collecting full
 covariance matrices to the Driver node", and `spark.ml`'s `PCA` forms the whole
-80×80 covariance on the driver. `RowMatrixPCA` calls `computeSVD` with the mode
+77×77 covariance on the driver. `RowMatrixPCA` calls `computeSVD` with the mode
 named explicitly, so `--svd-mode dist-eigs` runs ARPACK Lanczos on distributed
 `Aᵀ(Av)` products and never materialises an n×n matrix. It centres the rows
 first, so both routes match `spark.ml`'s PCA exactly.
 
-`local-eigs` is the **default**: it gives identical components for 6.7–8.0× less
-time (PCA stage only — 18.9 s vs 126.6 s at 50k rows, 20.8 s vs 167.0 s at 200k),
-and at n = 80 the driver-side O(n³) it "avoids" is microseconds. Pass
-`--svd-mode dist-eigs` to run the distributed route — see
+`dist-eigs` is the **default**, because it is the only mode that satisfies that
+wording: `local-eigs` and `local-svd` both call `computeGramianMatrix` and so form
+the covariance on the driver. It is also the slower one here — 6.7–8.0× on the PCA
+stage — because it runs one distributed pass per Lanczos iteration where the
+Gramian route runs one pass total.
+
+That is a deliberate trade, not an oversight. The 77×77 covariance is only 46 KB
+because `ROUTE` is target-encoded; one-hot it instead and the vector is 4,703 wide
+with a 169 MB covariance, and with `TAIL_NUMBER` too, 9,599 wide and 703 MB. The
+distributed route keeps a single 616-byte vector on the driver at any width, which
+is the property worth having in a pipeline meant to scale. Components are identical
+either way, so pass `--svd-mode local-eigs` while iterating — see
 [`docs/REPORT.md` §A2.1](docs/REPORT.md).
 
 ---
