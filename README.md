@@ -18,10 +18,43 @@ the serialized pipeline.
 
 ## Quick start
 
+### First time only
+
+Nothing is installed system-wide — the interpreter, the JDK and the Hadoop
+natives all live under this directory. [`SETUP.md`](SETUP.md) explains why each
+version is pinned; this is just the sequence.
+
+```bash
+# 1. Python 3.11 venv + pinned dependencies
+uv python install 3.11
+"$(uv python find 3.11)" -m venv .venv
+./.venv/Scripts/python.exe -m pip install -U pip setuptools
+./.venv/Scripts/python.exe -m pip install -r requirements.txt
+
+# 2. Project-local JDK 17  ->  .jdk/
+#    Temurin 17 as a zip (no admin/UAC needed), from the Adoptium API.
+
+# 3. Hadoop natives  ->  .hadoop/bin/
+#    hadoop.dll + winutils.exe, version 3.3.5, from cdarlint/winutils.
+#    Must be 3.3.5 to match PySpark's bundled hadoop-client-*-3.3.4.jar.
+```
+
+Then place the three Kaggle CSVs in `data/` — `flights.csv`, `airports.csv`,
+`airlines.csv` ([source](https://www.kaggle.com/datasets/usdot/flight-delays)).
+They are gitignored for size; `flights.csv` alone is 592 MB.
+
+### Every session
+
 ```bash
 source ./env.sh                    # Git Bash        (PowerShell: . .\env.ps1)
 python scripts/smoke_test.py       # runtime gate — must print 5/5
 ```
+
+**`source ./env.sh` is not optional, even for a one-line query.** It pins the
+JDK, the Hadoop natives and the venv interpreter; without it `python` is the
+system 3.14, which cannot import PySpark at all — and which carries MLflow
+3.8.1, whose first `MlflowClient` call silently migrates `mlflow.db` to the 3.x
+schema and locks the pinned 2.19.0 out of it. See [Environment](#environment).
 
 Then the full sequence:
 
@@ -38,6 +71,9 @@ python inference.py &                      # streaming scorer
 python scripts/make_stream_events.py --batches 5
 ```
 
+`submit_pipeline.sh` takes `MODE=train` (default), `MODE=inference` or
+`MODE=benchmark`.
+
 Useful flags while iterating:
 
 ```bash
@@ -46,7 +82,54 @@ python mllib_pipeline.py --sample-fraction 0.005 --tune-fraction 0.5 --folds 2
 
 # tune on 10% of train, refit the winner on all of it
 python mllib_pipeline.py --tune-fraction 0.1 --folds 5 --parallelism 4
+
+# PCA arms are 6.7-8.0x faster on the driver-side Gramian route; identical
+# components, so use it whenever you are not demonstrating the distributed one
+python mllib_pipeline.py --svd-mode local-eigs
 ```
+
+---
+
+## Viewing the results
+
+The tournament is already fitted — `mlflow.db` holds every run and the Model
+Registry entry, so none of this needs a retrain.
+
+```bash
+source ./env.sh
+MLFLOW_URI=$(python -c 'import spark_session; print(spark_session.TRACKING_URI)')
+mlflow ui --backend-store-uri "$MLFLOW_URI" --host 127.0.0.1 --port 5000
+```
+
+`spark_session.TRACKING_URI` is the one place the store location is defined, so
+that form keeps working after the directory is renamed for submission. Note the
+URI needs a *Windows* path — `sqlite:///$PWD/mlflow.db` does **not** work in Git
+Bash, where `$PWD` is `/d/BigData` and SQLite cannot open it. Use `$(pwd -W)` if
+you want to spell it out by hand.
+
+Then open <http://127.0.0.1:5000>. Two things to look at:
+
+- **Experiments -> `flight-delay-mllib`** — the tournament arms as top-level
+  runs, each with its cross-validation folds nested underneath.
+- **Models -> `flight_delay_pipeline`** — version 1 in stage **Production**,
+  which is the `Staging -> Production` transition the brief asks for.
+
+Static copies of the same numbers live in `docs/benchmarks/` (figures plus
+`results_table.md`), regenerated from the store by `python benchmark_results.py`
+without refitting anything.
+
+> **Two traps around the store.**
+> Run `mlflow` only through `env.sh` or `./.venv/Scripts/mlflow.exe` — a bare
+> `mlflow`/`python` resolves to system Python 3.14 and its MLflow 3.8.1 will
+> migrate the database out from under the pinned 2.19.0. (Recovery, if it
+> happens: the 3.x migrations are additive, so
+> `UPDATE alembic_version SET version_num='0584bdc529eb'` restores it with no
+> data loss.)
+> And **any** training run registers a new model version and promotes it with
+> `archive_existing_versions=True` — even `--sample-fraction 0.01`, and
+> `--experiment` does not protect you, because the registry is global. Back up
+> `mlflow.db`, `models/` and `docs/benchmarks/tournament_results.json` before a
+> run you do not intend to keep.
 
 ---
 
@@ -230,7 +313,7 @@ Each phase has a gate; nothing downstream is trusted until it passes.
 | Runtime | `python scripts/smoke_test.py` | `ALL CHECKS PASSED (5/5)` |
 | Data | `python data_prep.py --step curate` | 5,704,000 rows; 0 missing coordinates |
 | Transformers | `python scripts/test_transformers.py` | `ALL CHECKS PASSED (8/8)` |
-| Tournament | `mlflow ui --backend-store-uri sqlite:///mlflow.db` | 5 parent runs, nested CV children, a version in **Production** |
+| Tournament | `mlflow ui --backend-store-uri "$(python -c 'import spark_session; print(spark_session.TRACKING_URI)')"` | 14 tournament arms as top-level runs, CV folds nested under each, a version in **Production** |
 | Streaming | `inference.py` + `make_stream_events.py` | predictions on the console sink and in `stream_output/` |
 
 ---
