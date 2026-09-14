@@ -109,5 +109,7 @@
       "type": "string"
     }
   ],
-  "glm_offset": 88.0
+  "glm_offset": 88.0,
+  "label": "label_delay",
+  "winner": "random_forest_regressor__pca"
 }

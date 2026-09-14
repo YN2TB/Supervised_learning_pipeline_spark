@@ -1,0 +1,1 @@
+{"class":"custom_transformers.SignedLog1pTransformer","timestamp":1789381984418,"sparkVersion":"3.5.4","uid":"SignedLog1pTransformer_4bcf5ce272b5","paramMap":{"inputCols":["DISTANCE","SCHEDULED_TIME","GC_DISTANCE_MI"],"outputCols":["log_distance","log_sched_time","log_gc_distance"]},"defaultParamMap":{}}
