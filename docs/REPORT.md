@@ -858,10 +858,12 @@ inputs is wrong. Across all 5,704,000 curated rows the agreement is a **median o
 reference points and published route distance.
 
 The second is that the pooled median is the wrong statistic to stop at, and
-checking per route is what actually found something. Of 2,336 distinct routes, 85
-disagree by more than 5 miles and exactly **two** by more than 100:
+checking pair by pair is what actually found something. Distance is symmetric, so
+this check collapses direction: the 4,635 directed `ROUTE` values of §B2.3 become
+**2,336 undirected airport pairs** (2,336 × 2 − 37 one-way legs = 4,635). Of
+those, 85 disagree by more than 5 miles and exactly **two** by more than 100:
 
-| route | worst disagreement | cause |
+| airport pair | worst disagreement | cause |
 |---|---|---|
 | GUM–HNL | 2,781 mi | `airports.csv` gives GUM longitude $-144.796$; Guam is at $+144.796$ |
 | HNL–PPG | 1,630 mi | `airports.csv` gives PPG latitude $+14.331$; Pago Pago is at $-14.331$ |
