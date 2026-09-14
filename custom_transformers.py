@@ -607,15 +607,19 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
 
     @keyword_only
     def __init__(self, inputCol="features_selected", outputCol="features", k=10,
-                 svdMode="dist-eigs", maxIter=300, tol=1e-10, centre=True):
+                 svdMode="local-eigs", maxIter=300, tol=1e-10, centre=True):
         super().__init__()
-        # dist-eigs is the default because it is the only mode that satisfies the
-        # brief's "without collecting full covariance matrices to the Driver node":
-        # local-eigs and local-svd both call computeGramianMatrix. It costs
-        # 6.7-8.0x more on the PCA stage for identical components - pass
-        # svdMode="local-eigs" when you want the cheap Gramian path.
+        # dist-eigs is the only mode that satisfies the brief's "without collecting
+        # full covariance matrices to the Driver node" - local-eigs and local-svd
+        # both call computeGramianMatrix - but it cannot converge on this data.
+        # The spectrum is flat where we cut it (lambda10/lambda11 = 1.0054) and
+        # Spark fixes ncv at min(2k, n) = 20, so ARPACK runs out of shifts and
+        # every PCA arm fails with info=3. local-eigs builds the 77x77 Gramian
+        # (46 KB) and returns the same components at |cos| = 1.0, so it is the
+        # default and what the registered model was fitted with. See REPORT A2.1
+        # for why the distributed route is still the right answer at larger n.
         self._setDefault(inputCol="features_selected", outputCol="features", k=10,
-                         svdMode="dist-eigs", maxIter=300, tol=1e-10, centre=True)
+                         svdMode="local-eigs", maxIter=300, tol=1e-10, centre=True)
         self._set(**self._input_kwargs)
 
     def _fit(self, dataset: DataFrame):

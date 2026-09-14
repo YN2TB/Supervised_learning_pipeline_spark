@@ -101,7 +101,7 @@ ONEHOT_NUMERIC = ["MONTH", "DAY_OF_WEEK", "DEP_HOUR"]
 
 
 def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
-                         svd_mode: str = "dist-eigs"):
+                         svd_mode: str = "local-eigs"):
     """Shared preprocessing. Returns (stages, assembler_input_names)."""
     # svd_mode must stay in step with the --svd-mode CLI default. They disagreed
     # once, and the only caller that omits the argument is
@@ -398,15 +398,18 @@ def main() -> None:
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--parallelism", type=int, default=4)
     ap.add_argument("--pca-k", type=int, default=10)
-    ap.add_argument("--svd-mode", default="dist-eigs",
+    ap.add_argument("--svd-mode", default="local-eigs",
                     choices=["auto", "local-svd", "local-eigs", "dist-eigs"],
-                    help="RowMatrix.computeSVD mode for the PCA arms. Default "
-                         "dist-eigs never materialises the n x n covariance (ARPACK "
-                         "Lanczos on distributed A^T(Av) products), which is what the "
-                         "brief asks for; local-eigs and local-svd both form the "
-                         "Gramian on the driver and run 6.7-8.0x faster at n=77. All "
-                         "give identical components, so use local-eigs when you are "
-                         "iterating and do not need the distributed route.")
+                    help="RowMatrix.computeSVD mode for the PCA arms. dist-eigs is "
+                         "the mode the brief describes - ARPACK Lanczos on distributed "
+                         "A^T(Av) products, never materialising the n x n covariance - "
+                         "but it cannot converge on this covariance: the spectrum is "
+                         "flat at the cut (lambda10/lambda11 = 1.0054) and ncv is fixed "
+                         "at min(2k, n) = 20, so every PCA arm dies with ARPACK info=3, "
+                         "'No shifts could be applied'. local-eigs forms the 77x77 "
+                         "Gramian on the driver (46 KB) and returns identical components "
+                         "at |cos| = 1.0, so that is the default and what the registered "
+                         "model was fitted with. Pass dist-eigs to reproduce the failure.")
     ap.add_argument("--models", default="all")
     ap.add_argument("--register-arm", default="pca",
                     choices=["pca", "nopca", "any"],
