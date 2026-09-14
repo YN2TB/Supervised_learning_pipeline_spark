@@ -321,14 +321,41 @@ The gap widens with $m$, because `local-eigs` is dominated by fixed overhead whi
 `dist-eigs` pays per pass. Across the tournament — seven PCA arms, each refitted per
 fold and per grid point — that difference is several hours.
 
-**Both routes are implemented and verified to give identical components, and
-`dist-eigs` is the default.** It is the mechanism the specification names, and it
-is the only one of the three modes that satisfies the specification's wording
-literally: `local-svd` and `local-eigs` both call `computeGramianMatrix`, so under
-either of them the full $80 \times 80$ covariance is assembled on the Driver. Under
-`dist-eigs` no $n \times n$ object is ever formed, on the Driver or anywhere else.
+**Both routes are implemented and verified to give identical components.**
+`dist-eigs` is the mechanism the specification names, and the only one of the
+three modes that satisfies its wording literally: `local-svd` and `local-eigs`
+both call `computeGramianMatrix`, so under either of them the full
+$n \times n$ covariance is assembled on the Driver. Under `dist-eigs` no
+$n \times n$ object is ever formed, on the Driver or anywhere else.
 
-**Why that is the right default even though it is the slower one here.** The
+**The default is nevertheless `local-eigs`, because `dist-eigs` cannot converge
+on this covariance.** Every PCA arm fails under it. Three die with
+`IllegalStateException: ARPACK returns non-zero info = 3 No shifts could be
+applied. Try to increase NCV`, raised from
+`EigenValueDecomposition$.symmetricEigs`; the fourth dies with
+`ArrayIndexOutOfBoundsException: Index 1540`, and $1540 = 77 \times 20 =
+n \times \mathrm{ncv}$ — the Lanczos basis overflowing. All four are recorded
+verbatim in `docs/benchmarks/tournament_failures.json`.
+
+The cause is a property of the data, not of the implementation. ARPACK's implicit
+restart works by shifting along gaps in the spectrum, and this spectrum has none
+worth the name: the ten retained components carry 5.50%, 4.88%, 4.00%, 2.81%,
+2.34%, 2.17%, 1.99%, 1.89%, 1.69% and 1.60% of total variance, so by the cut each
+component is within about 6% of the one before it and the sequence is still
+falling. Spark offers no way out, because `symmetricEigs` hard-codes
+$\mathrm{ncv} = \min(2k, n) = 20$ — the one parameter the error message asks you
+to increase is not reachable through `computeSVD`. The same call succeeds at
+285,000 rows and fails at tournament scale, which is what a solver starved of
+shifts looks like rather than a fault in the caller.
+
+So the registered model, and every PCA run in `mlflow.db`, was fitted with
+`local-eigs`; `svd_mode` is logged as a parameter on each of them. Components are
+identical to the distributed route wherever that route completes ($|\cos| = 1.0$,
+explained variance to five decimals), so nothing about the result changes — only
+which solver produced it.
+
+**Why `dist-eigs` is still the right design, and why falling back is a finding
+rather than a retreat.** The
 temptation is to argue from the measurement: at $n = 77$ the covariance is 46 KB
 and the driver-side $O(n^3)$ is microseconds, so `local-eigs` is 6.7–8.0x cheaper
 for an identical answer. That argument selects an algorithm from the size of one
@@ -358,11 +385,19 @@ $\mathrm{ncv} = \min(2k, n) = 20$, so it grows *linearly* in $n$ where the
 covariance grows *quadratically*: 19 KB, 886 KB and 1.76 MB across the three
 widths above, against 46 KB, 169 MB and 703 MB. (The 616 bytes that cross the
 wire each iteration are one $n$-vector at $n = 77$, not the Driver's footprint.)
-That is the property being bought,
-and the measured 6.7–8.0x on this dataset is its price at this scale — not a
-claim that it is faster here, which it is not. `--svd-mode local-eigs` remains
-available and is the sensible thing to pass while iterating, precisely because at
-$n = 77$ the two are interchangeable.
+That is the property the
+distributed route buys, and the measured 6.7–8.0x is its price at this scale —
+not a claim that it is faster here, which it is not.
+
+What this dataset adds is that the property cannot always be bought. The same
+flatness that holds the retained variance to 28.46% is what denies ARPACK its
+shifts, so the two results are one finding seen twice: a covariance with no
+dominant directions is both a poor thing to compress and a hard thing to
+decompose iteratively. Where the spectrum has structure, or where $n$ is large
+enough that 703 MB on the Driver is the binding constraint, `dist-eigs` is the
+route to take. Here it is unavailable, and `local-eigs` on a 46 KB Gramian is not
+a compromise but the only mode that returns an answer at all. `--svd-mode
+dist-eigs` remains available and reproduces the failure exactly.
 
 ### A2.2 From SVD to principal components
 
@@ -811,10 +846,38 @@ serialisation and no Python-level loop. It is invoked from inside a Pipeline sta
 engineering travels with the serialized model and is reproduced identically at
 inference time.
 
-Independent check: the computed great-circle distance agrees with the `DISTANCE`
-column the data already carries to a **median of 0.97 mi** (p99 5.99 mi) — the
-residual being the difference between airport reference points and published route
-distance.
+**Why compute a distance the feed already carries.** `DISTANCE` arrives in the
+source table, so `haversine_miles` is by construction a duplicate of a column we
+already have. It is kept deliberately, for two reasons.
+
+The first is that it makes the pair a *cross-check*. Two measurements of the same
+quantity from independent sources — one published by the DOT, one derived from
+airport coordinates — agree or they do not, and where they do not, one of the two
+inputs is wrong. Across all 5,704,000 curated rows the agreement is a **median of
+0.97 mi** (p95 4.66, p99 5.97), the residual being the gap between airport
+reference points and published route distance.
+
+The second is that the pooled median is the wrong statistic to stop at, and
+checking per route is what actually found something. Of 2,336 distinct routes, 85
+disagree by more than 5 miles and exactly **two** by more than 100:
+
+| route | worst disagreement | cause |
+|---|---|---|
+| GUM–HNL | 2,781 mi | `airports.csv` gives GUM longitude $-144.796$; Guam is at $+144.796$ |
+| HNL–PPG | 1,630 mi | `airports.csv` gives PPG latitude $+14.331$; Pago Pago is at $-14.331$ |
+
+Both are sign errors in the Kaggle `airports.csv`, and neither is visible in the
+pooled figure — they move the median by nothing, because they touch 875 rows of
+5.7 million (0.015%). The same lesson appears in the October code repair (§B1.2),
+where a pooled median error of 0.96 mi looked excellent while five individual
+mappings were badly wrong: aggregate agreement measures the bulk, and data errors
+live in the tail. The derived feature is what makes that tail visible at all.
+
+The affected rows are left as they are rather than patched, since 875 rows of
+Pacific-territory flights cannot move any reported metric, and a silent correction
+to a source file is worse for reproducibility than a documented defect. The check
+is what matters: without the duplicate, there is no way to know the coordinates
+are wrong.
 
 A second UDF, `schedule_speed_udf`, computes the implied ground speed of the
 published schedule — a domain pressure metric, since a leg scheduled at unusually
