@@ -352,8 +352,13 @@ one node whose loss takes the whole application with it. The pipeline is one
 design decision away from that column, so a default chosen because *today's* $n$
 is 80 has hard-coded an assumption with no guard on it.
 
-`dist-eigs` has no such cliff: its working set on the Driver is a single
-$p$-vector, 616 bytes, whatever $n$ becomes. That is the property being bought,
+`dist-eigs` has no such cliff. Its Driver-side working set is ARPACK's Lanczos
+basis plus workspace, $O(n \cdot \mathrm{ncv})$ with
+$\mathrm{ncv} = \min(2k, n) = 20$, so it grows *linearly* in $n$ where the
+covariance grows *quadratically*: 19 KB, 886 KB and 1.76 MB across the three
+widths above, against 46 KB, 169 MB and 703 MB. (The 616 bytes that cross the
+wire each iteration are one $n$-vector at $n = 77$, not the Driver's footprint.)
+That is the property being bought,
 and the measured 6.7–8.0x on this dataset is its price at this scale — not a
 claim that it is faster here, which it is not. `--svd-mode local-eigs` remains
 available and is the sensible thing to pass while iterating, precisely because at
@@ -512,9 +517,12 @@ working response $z = \eta + (y - \mu)g'(\mu)$ and weights $w = 1/(V(\mu)g'(\mu)
 then solve a weighted least-squares problem. Each iteration is one distributed
 weighted regression, so a GLM costs a small multiple of an OLS fit.
 
-> **A constraint the brief's setup creates.** A log link — Gamma or Poisson — requires
-> $y > 0$ strictly, but arrival delay is *negative* for every early flight — the
-> majority of them. We therefore fit the GLM on $y + c$ with the constant
+> **A constraint the brief's setup creates.** The constraint comes from the
+> *family's support*, not from the link: Poisson is supported on
+> $\{0,1,2,\dots\}$ and Gamma on $(0,\infty)$, so both need $y \ge 0$. The log
+> link constrains only the **mean** — $\mu = e^{X\beta} > 0$ for any $\beta$ — and
+> says nothing about $y$. Arrival delay is *negative* for early flights, which is
+> **61.3%** of the feed (3,494,095 of 5,704,000 rows, minimum $-87$ minutes). We therefore fit the GLM on $y + c$ with the constant
 > $c = |\min(y, 0)| + 1$ computed once on the training data. Because RMSE, MAE and
 > $R^2$ are all invariant to a common shift of prediction and target, the reported
 > metrics remain directly comparable to the other regressors with no inverse
