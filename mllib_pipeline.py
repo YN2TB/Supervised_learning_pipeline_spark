@@ -408,6 +408,13 @@ def main() -> None:
                          "give identical components, so use local-eigs when you are "
                          "iterating and do not need the distributed route.")
     ap.add_argument("--models", default="all")
+    ap.add_argument("--register-arm", default="pca",
+                    choices=["pca", "nopca", "any"],
+                    help="which arm may be promoted to Production. The brief's "
+                         "Preprocessing spec names PCA(k=10) as part of the Pipeline, "
+                         "so the shipped artifact must contain a PCA stage - hence the "
+                         "default. 'any' restores pure best-RMSE selection, which picks "
+                         "the no-PCA arm here (RMSE 10.52 against 21.48).")
     ap.add_argument("--experiment", default="flight-delay-mllib")
     ap.add_argument("--resume", dest="resume", action="store_true", default=True,
                     help="skip arms already completed in the tracking store (default)")
@@ -528,6 +535,7 @@ def main() -> None:
                             "label": spec["label"], "folds": args.folds,
                             "parallelism": args.parallelism,
                             "pca_k": args.pca_k if use_pca else 0,
+                            "svd_mode": args.svd_mode if use_pca else "",
                             "tune_rows": n_tune, "train_rows": n_train,
                             "test_rows": n_test, "grid_size": len(spec["grid"]),
                             "sample_fraction": args.sample_fraction,
@@ -627,19 +635,66 @@ def register_winner(results: dict, args) -> None:
     if not reg:
         print("no regression runs to register")
         return
+    # The brief specifies PCA(k=10) in the Pipeline's preprocessing, so the
+    # artifact we ship has to contain a PCA stage. Pure best-RMSE selection
+    # registers the no-PCA arm (10.52 against 21.48) and hands a marker a
+    # SQLTransformer passthrough where PCA should be. The no-PCA arms still
+    # run and are still logged - they are simply not what gets promoted.
+    want = getattr(args, "register_arm", "any")
+    if want != "any":
+        eligible = {k: v for k, v in reg.items() if v.get("arm") == want}
+        if eligible:
+            reg = eligible
+        else:
+            print(f"warning: no regression arm matched --register-arm {want}; "
+                  f"falling back to all {len(reg)} regression arms")
+
     best_name = min(reg, key=lambda k: reg[k]["rmse"])
     print(f"\nbest regression pipeline: {best_name} (rmse={reg[best_name]['rmse']:.4f})")
 
     client = MlflowClient()
     exp = client.get_experiment_by_name(args.experiment)
-    runs = client.search_runs([exp.experiment_id],
-                             filter_string=f"tags.mlflow.runName = '{best_name}'",
-                             order_by=["attributes.start_time DESC"], max_results=1)
-    if not runs:
-        print("could not locate the winning run in the tracking store")
+
+    # Take the newest run for this arm that actually FINISHED *and* still has a
+    # readable model artifact. Without both checks a failed re-attempt shadows
+    # the good earlier run (it is newer), gets promoted to Production, and then
+    # cannot be downloaded - which is exactly how a working model was lost.
+    runs = client.search_runs(
+        [exp.experiment_id],
+        filter_string=f"tags.mlflow.runName = '{best_name}' and attributes.status = 'FINISHED'",
+        order_by=["attributes.start_time DESC"], max_results=10)
+    win = None
+    for r in runs:
+        try:
+            names = {a.path for a in client.list_artifacts(r.info.run_id, "pipeline_model")}
+            if any(n.endswith("MLmodel") for n in names):
+                win = r
+                break
+            print(f"  skipping {r.info.run_id[:8]}: no pipeline_model artifact")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  skipping {r.info.run_id[:8]}: {type(exc).__name__}: {exc}")
+    if win is None:
+        print(f"no FINISHED run named {best_name} still has a model artifact; "
+              f"leaving Production and {MODEL_DIR} untouched")
         return
 
-    uri = f"runs:/{runs[0].info.run_id}/pipeline_model"
+    uri = f"runs:/{win.info.run_id}/pipeline_model"
+
+    # Stage the new model on disk BEFORE destroying anything. If the download or
+    # the write fails we return with the previous model still in place.
+    best_dir = os.path.join(MODEL_DIR, "best_pipeline")
+    staging = best_dir + ".staging"
+    previous = best_dir + ".previous"
+    os.makedirs(MODEL_DIR, exist_ok=True)
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        mlflow.spark.load_model(uri).write().overwrite().save(staging.replace("\\", "/"))
+    except Exception as exc:  # noqa: BLE001
+        shutil.rmtree(staging, ignore_errors=True)
+        print(f"could not materialise {uri}: {type(exc).__name__}: {exc}")
+        print(f"Production and {best_dir} left untouched")
+        return
+
     mv = mlflow.register_model(uri, REGISTERED_MODEL)
     # MLflow 2.x stage transitions, exactly as the brief specifies.
     client.transition_model_version_stage(REGISTERED_MODEL, mv.version, "Staging")
@@ -653,9 +708,10 @@ def register_winner(results: dict, args) -> None:
     # their predictions come back on the shifted scale. Without this, a GLM
     # winner would make inference.py emit every prediction glm_offset minutes
     # too high - silently, because a shifted delay is still a plausible delay.
-    won_label = runs[0].data.params.get("label", REG_LABEL)
+    won_label = win.data.params.get("label", REG_LABEL)
     meta_path = os.path.join(MODEL_DIR, "input_schema.json")
     try:
+        shutil.copy2(meta_path, meta_path + ".previous")
         with open(meta_path) as fh:
             meta = json.load(fh)
         meta["label"] = won_label
@@ -666,18 +722,20 @@ def register_winner(results: dict, args) -> None:
     except Exception as exc:  # noqa: BLE001
         print(f"could not update the serving contract: {exc}")
 
-    # Also drop a plain PipelineModel on disk for the streaming job, which
-    # should not need the tracking store to be reachable.
-    # Only clear the model directory itself. Wiping MODEL_DIR would take
-    # input_schema.json with it - the serving contract that inference.py and
-    # make_stream_events.py both read.
-    best_dir = os.path.join(MODEL_DIR, "best_pipeline")
+    # Swap last, and keep the old tree until the new one is in place. Only the
+    # model directory moves: wiping MODEL_DIR would take input_schema.json with
+    # it - the serving contract inference.py and make_stream_events.py read.
+    shutil.rmtree(previous, ignore_errors=True)
     if os.path.exists(best_dir):
-        shutil.rmtree(best_dir, ignore_errors=True)
-    os.makedirs(MODEL_DIR, exist_ok=True)
-    mlflow.spark.load_model(uri).write().overwrite().save(
-        os.path.join(MODEL_DIR, "best_pipeline").replace("\\", "/"))
-    print(f"saved {os.path.join(MODEL_DIR, 'best_pipeline')}")
+        os.rename(best_dir, previous)
+    try:
+        os.rename(staging, best_dir)
+    except Exception:  # noqa: BLE001 - put the old model back, then re-raise
+        if os.path.exists(previous) and not os.path.exists(best_dir):
+            os.rename(previous, best_dir)
+        raise
+    shutil.rmtree(previous, ignore_errors=True)
+    print(f"saved {best_dir}")
 
 
 if __name__ == "__main__":
