@@ -244,13 +244,23 @@ named explicitly, so `--svd-mode dist-eigs` runs ARPACK Lanczos on distributed
 `Aᵀ(Av)` products and never materialises an n×n matrix. It centres the rows
 first, so both routes match `spark.ml`'s PCA exactly.
 
-`dist-eigs` is the **default**, because it is the only mode that satisfies that
-wording: `local-eigs` and `local-svd` both call `computeGramianMatrix` and so form
-the covariance on the driver. It is also the slower one here (6.7–8.0× on the PCA
-stage) because it runs one distributed pass per Lanczos iteration where the
-Gramian route runs one pass total.
+`dist-eigs` is the only mode that satisfies that wording: `local-eigs` and
+`local-svd` both call `computeGramianMatrix` and so form the covariance on the
+driver. It is not the default, because on this data it does not finish. Every PCA
+arm fails under it with `ARPACK info = 3, No shifts could be applied` (one with an
+`ArrayIndexOutOfBounds` at 1540 = 77 × 20 = n × ncv, the Lanczos basis
+overflowing), recorded in `docs/benchmarks/tournament_failures.json`. The spectrum
+is flat where we cut it, ARPACK restarts by shifting along spectral gaps, and
+Spark hard-codes `ncv = min(2k, n) = 20`.
 
-That is a deliberate trade, not an oversight. The 77×77 covariance is only 46 KB
+So **`local-eigs` is the default**, and it is what the registered model was fitted
+with; `svd_mode` is logged on every PCA run. Components are identical either way
+(|cos| = 1.0). Where `dist-eigs` does run it costs 6.7–8.0× on the PCA stage,
+since it makes one distributed pass per Lanczos iteration where the Gramian route
+makes one pass total.
+
+The distributed route is still the right design, which is why the fallback is
+reported as a finding rather than quietly swapped. The 77×77 covariance is only 46 KB
 because `ROUTE` is target-encoded; one-hot it instead and the vector is 4,703 wide
 with a 169 MB covariance, and with `TAIL_NUMBER` too, 9,599 wide and 703 MB. The
 distributed route's driver footprint is ARPACK's Lanczos basis, `O(n x ncv)` with
