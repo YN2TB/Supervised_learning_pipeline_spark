@@ -1,13 +1,13 @@
 # Advanced PySpark MLlib: Supervised Pipelines, Custom Transformers, Distributed Ensembles
 
-**Dataset.** US DOT on-time performance, calendar year 2015 — 5,819,079 flights,
+**Dataset.** US DOT on-time performance, calendar year 2015: 5,819,079 flights,
 592 MB CSV, joined to 322 airports and 14 carriers.
 **Tasks.** Arrival delay in minutes (regression) and severe delay, `ARRIVAL_DELAY > 30`
 (binary classification), trained under one shared pipeline and one 80/20 split.
 
 ---
 
-# Part A — Mathematical foundations and distributed mechanics
+# Part A: Mathematical foundations and distributed mechanics
 
 ## A1. Scaling mathematics and distributed sparse operations
 
@@ -19,7 +19,7 @@ deviation $\sigma_j$:
 $$z_{ij} = \frac{x_{ij} - \mu_j}{\sigma_j}$$
 
 producing $\mathbb{E}[z_j] = 0$, $\operatorname{Var}(z_j) = 1$. The transform is
-unbounded, so outliers survive it — a value 40 standard deviations out is still 40
+unbounded, so outliers survive it; a value 40 standard deviations out is still 40
 after scaling. It assumes an approximately symmetric distribution to be meaningful.
 
 **Min–max (MinMaxScaler).** Mapping onto $[\min, \max]$, by default $[0,1]$:
@@ -30,7 +30,7 @@ The output range is guaranteed, which suits bounded activations and distance
 kernels, but the mapping is defined by two order statistics. A single extreme
 value sets $x^{\max}_j$ and compresses every ordinary observation into a narrow
 band near zero. On this dataset that failure is concrete. `DEPARTURE_DELAY`
-runs from −82 to **1,988** minutes — one aircraft delayed 33.1 hours — against a
+runs from −82 to **1,988** minutes (one aircraft delayed 33.1 hours) against a
 median of −2, so every ordinary flight is divided by a range of 2,070 that a single
 row set:
 
@@ -46,7 +46,7 @@ middle 98% occupies 8.70%. Delete that one row and every other value on the scal
 moves.
 
 **Why this reaches the ElasticNet arm.** The compression is not uniform across
-columns — each is squeezed by whatever outlier it happens to carry — and that
+columns: each is squeezed by whatever outlier it happens to carry, and that
 asymmetry is what does the damage. Interquartile span as a fraction of each
 column's own post-scaling scale:
 
@@ -58,13 +58,13 @@ column's own post-scaling scale:
 | `SCHEDULED_TIME` | 0.1257 | 1.168 |
 | widest : narrowest | **24$\times$** | **3.6$\times$** |
 
-Under min–max, `DEPARTURE_DELAY` — the most predictive feature in the dataset,
-$r = 0.9446$ — would occupy a usable range 24$\times$ narrower than `DISTANCE`,
+Under min–max, `DEPARTURE_DELAY` (the most predictive feature in the dataset,
+$r = 0.9446$) would occupy a usable range 24$\times$ narrower than `DISTANCE`,
 purely because of one 33-hour delay. The ElasticNet penalty
 $\lambda\left[\alpha\lVert\beta\rVert_1 + \frac{1-\alpha}{2}\lVert\beta\rVert_2^2\right]$
 charges every coefficient at the same rate regardless of its feature's scale. If
 feature $j$ is compressed by a factor $c$, then $\beta_j$ must grow by $1/c$ to make
-the same contribution to $\hat{y}$ — and the penalty bills that inflated coefficient,
+the same contribution to $\hat{y}$, and the penalty bills that inflated coefficient,
 $1/c$ times harder under $\ell_1$ and $1/c^2$ under $\ell_2$. Min–max would therefore
 shrink the single most informative feature toward zero roughly 24$\times$ (L1) or
 576$\times$ (L2) faster than `DISTANCE`, for reasons unconnected to predictive value.
@@ -75,12 +75,12 @@ reflects real differences in distribution shape rather than outlier accidents. T
 is the practical reason a regularised model wants standardised inputs, and why the
 pipeline uses `StandardScaler` (§B3).
 
-Both are affine in $x$, so neither changes the *shape* of a distribution — neither
+Both are affine in $x$, so neither changes the *shape* of a distribution; neither
 one fixes skew. That is what A1.3 is for.
 
 **Degenerate columns.** If $\sigma_j = 0$ (a constant feature), $z_{ij}$ is
 undefined. Spark defines it as $0$ rather than failing. That convention is safe
-numerically but has a consequence downstream that we hit in practice — see A2.3.
+numerically but has a consequence downstream that we hit in practice; see A2.3.
 
 ### A1.2 Why `withMean=True` is dangerous on distributed sparse vectors
 
@@ -92,7 +92,7 @@ structural zero maps to
 
 $$0 - \mu_j = -\mu_j \neq 0$$
 
-so **every** zero becomes an explicit stored non-zero. Sparsity is not reduced —
+so **every** zero becomes an explicit stored non-zero. Sparsity is not reduced;
 it is destroyed outright, and the vector must be materialised dense. Spark guards
 this: the older `mllib` `StandardScalerModel` refuses sparse input when
 `withMean=true` outright, and the `ml` implementation has to densify.
@@ -108,7 +108,7 @@ The cost is a function of the one-hot expansion. In our assembled vector:
 
 Centering would take every row from 23 stored values to 80. Measured with Spark's
 own `SizeEstimator` on the real vector shape, that is **336 bytes sparse against
-672 dense — a 2.0× increase** in shuffle volume, cache footprint and GC pressure,
+672 dense, a 2.0× increase** in shuffle volume, cache footprint and GC pressure,
 or 1.92 GB against 3.83 GB across 5.7M rows. It also scales with the *worst* case:
 push `ROUTE` (4,627 levels) through one-hot instead of target encoding and the
 same measurement gives **110×**.
@@ -131,7 +131,7 @@ handled by fitting an intercept, which absorbs the uncentred mean.
 
 Affine scaling cannot fix skew (A1.1), so a *nonlinear* map is required. Requiring
 it to be monotone (rank must survive) and concave on $x>0$ (large values must
-compress harder than small) still leaves a family — $\sqrt{x}$, $x^{1/3}$,
+compress harder than small) still leaves a family: $\sqrt{x}$, $x^{1/3}$,
 $\ln x$, Box–Cox. The logarithm is not chosen from that family; it is forced by
 one further requirement.
 
@@ -142,7 +142,7 @@ $$g(X) \approx g(\mu) + g'(\mu)(X-\mu) \quad\Longrightarrow\quad
 \operatorname{Var}\left(g(X)\right) \approx \left[g'(\mu)\right]^2\operatorname{Var}(X)$$
 
 Extreme right skew in positive data characteristically arises when spread grows
-with level — a constant coefficient of variation, $\operatorname{SD}(X) = c\mu$.
+with level, a constant coefficient of variation, $\operatorname{SD}(X) = c\mu$.
 Demanding that the transformed variance be constant regardless of level:
 
 $$\left[g'(\mu)\right]^2 c^2\mu^2 = k
@@ -155,7 +155,7 @@ $\lambda\to0$ recovers exactly this case.)
 
 The same assumption explains *both* halves of the problem: if spread scales with
 level while the variable is bounded below by zero, the upper tail necessarily
-stretches — which **is** the skew. One condition produces the skew and identifies
+stretches, which **is** the skew. One condition produces the skew and identifies
 its remedy. The premise holds on this data ($\operatorname{CV}$ of `DISTANCE` is
 0.738), and the stabilisation is measurable: binned by level, the raw standard
 deviation of `DISTANCE` runs 68.9, 61.9, 77.0, 101.1, 493.3 across quintiles,
@@ -170,7 +170,7 @@ are unaffected. And because $\frac{d}{dx}\ln(1+x) = \frac{1}{1+x}$, the derivati
 shrinks as $x$ grows: large values are pulled in far harder than small ones, which
 is exactly the compression skew needs. Multiplicative structure becomes additive,
 which is what the linear models can actually represent. It also fixes zero:
-$\ln(1+0) = 0$, so sparsity survives — the same argument as A1.2.
+$\ln(1+0) = 0$, so sparsity survives, the same argument as A1.2.
 
 **The negative-value problem.** `DEPARTURE_DELAY` is negative for early flights,
 where $\ln(1+x)$ is undefined for $x \le -1$. We therefore use the **signed**
@@ -188,7 +188,7 @@ $\mathbb{R}$, so rank is preserved. It compresses both tails symmetrically, so a
 a least-squares fit grows with its squared deviation $(x-\bar{x})^2$. The largest
 `DEPARTURE_DELAY` in the curated data is 1,988 minutes, giving
 $(x-\bar{x})^2 = 3.92\times10^{6}$ against a mean of 9.3. Under the signed log that
-same row contributes $5.63\times10^{1}$ — its influence on the fit falls by a factor
+same row contributes $5.63\times10^{1}$; its influence on the fit falls by a factor
 of roughly **69,500**, without deleting it or capping it. That is the difference
 between compression and truncation: the row keeps its rank and its status as the
 most delayed flight in the year, but stops dominating the objective.
@@ -206,11 +206,11 @@ absorbs it.
 
 The first pipeline fed the models only the **clipped** value. That was wrong
 because an outlier is not the same thing as a large value: the fitted fence lands
-at $[-23, 25]$ minutes and puts 12.8% of flights above it — flights averaging
+at $[-23, 25]$ minutes and puts 12.8% of flights above it, flights averaging
 **+72.9 minutes** of arrival delay against −5.6 for everyone else. Clipping drops
 the correlation to 0.614, capping achievable $R^2$ near $0.614^2 \approx 0.38$.
 
-The obvious repair — send it through the signed log instead — was *also* wrong,
+The obvious repair (send it through the signed log instead) was *also* wrong,
 and for a subtler reason: the relationship is linear, so a monotone nonlinear
 transform actively destroys the structure a linear model is built to exploit.
 Measured directly, with `LinearRegression` on a 2% sample:
@@ -255,11 +255,11 @@ $$A^\top A = \sum_{i=1}^{m} a_i a_i^\top$$
 
 Each term is $n \times n$. So every executor scans only its own partition,
 accumulating a local $n \times n$ matrix, and those partial sums are combined by
-`treeAggregate` — a tree-structured reduction whose depth is logarithmic in the
+`treeAggregate`, a tree-structured reduction whose depth is logarithmic in the
 partition count, so the driver receives $O(\log p)$ merges rather than $p$ of them.
 
 The important consequence: **the $m \times n$ data matrix is never collected.** Only
-an $n \times n$ summary — 77×77 here, ~46 KB — crosses the network per partial
+an $n \times n$ summary (77×77 here, ~46 KB) crosses the network per partial
 aggregate. Communication is independent of $m$ entirely.
 
 That is the **Gramian route**, and it settles the *data*. It does not settle the
@@ -318,8 +318,8 @@ the real 80-column vector at $k=10$, PCA-stage time only:
 | 200,000 | 20.8 s | 167.0 s | 8.0x |
 
 The gap widens with $m$, because `local-eigs` is dominated by fixed overhead while
-`dist-eigs` pays per pass. Across the tournament — seven PCA arms, each refitted per
-fold and per grid point — that difference is several hours.
+`dist-eigs` pays per pass. Across the tournament (seven PCA arms, each refitted per
+fold and per grid point), that difference is several hours.
 
 **Both routes are implemented and verified to give identical components.**
 `dist-eigs` is the mechanism the specification names, and the only one of the
@@ -334,7 +334,7 @@ on this covariance.** Every PCA arm fails under it. Three die with
 applied. Try to increase NCV`, raised from
 `EigenValueDecomposition$.symmetricEigs`; the fourth dies with
 `ArrayIndexOutOfBoundsException: Index 1540`, and $1540 = 77 \times 20 =
-n \times \mathrm{ncv}$ — the Lanczos basis overflowing. All four are recorded
+n \times \mathrm{ncv}$, the Lanczos basis overflowing. All four are recorded
 verbatim in `docs/benchmarks/tournament_failures.json`.
 
 The cause is a property of the data, not of the implementation. ARPACK's implicit
@@ -343,7 +343,7 @@ worth the name: the ten retained components carry 5.50%, 4.88%, 4.00%, 2.81%,
 2.34%, 2.17%, 1.99%, 1.89%, 1.69% and 1.60% of total variance, so by the cut each
 component is within about 6% of the one before it and the sequence is still
 falling. Spark offers no way out, because `symmetricEigs` hard-codes
-$\mathrm{ncv} = \min(2k, n) = 20$ — the one parameter the error message asks you
+$\mathrm{ncv} = \min(2k, n) = 20$, the one parameter the error message asks you
 to increase is not reachable through `computeSVD`. The same call succeeds at
 285,000 rows and fails at tournament scale, which is what a solver starved of
 shifts looks like rather than a fault in the caller.
@@ -351,7 +351,7 @@ shifts looks like rather than a fault in the caller.
 So the registered model, and every PCA run in `mlflow.db`, was fitted with
 `local-eigs`; `svd_mode` is logged as a parameter on each of them. Components are
 identical to the distributed route wherever that route completes ($|\cos| = 1.0$,
-explained variance to five decimals), so nothing about the result changes — only
+explained variance to five decimals), so nothing about the result changes, only
 which solver produced it.
 
 **Why `dist-eigs` is still the right design, and why falling back is a finding
@@ -363,7 +363,7 @@ sample, and it is exactly the reasoning a distributed system should not be built
 on.
 
 $n = 77$ is not a property of this problem. It is a consequence of a single
-feature-engineering decision made two sections earlier — target-encoding `ROUTE`
+feature-engineering decision made two sections earlier: target-encoding `ROUTE`
 rather than one-hot encoding it (§A1.2, §B2). Reverse that one choice and the
 covariance stops being free:
 
@@ -373,8 +373,8 @@ covariance stops being free:
 | `ROUTE` one-hot instead | 4,703 | **169 MB** | $1.0 \times 10^{11}$ |
 | `TAIL_NUMBER` one-hot as well | 9,599 | **703 MB** | $8.8 \times 10^{11}$ |
 
-A 703 MB dense array on the Driver — before Breeze allocates its decomposition
-workspace — is not a throughput question but a failure mode, and it fails on the
+A 703 MB dense array on the Driver (before Breeze allocates its decomposition
+workspace) is not a throughput question but a failure mode, and it fails on the
 one node whose loss takes the whole application with it. The pipeline is one
 design decision away from that column, so a default chosen because *today's* $n$
 is 80 has hard-coded an assumption with no guard on it.
@@ -386,7 +386,7 @@ covariance grows *quadratically*: 19 KB, 886 KB and 1.76 MB across the three
 widths above, against 46 KB, 169 MB and 703 MB. (The 616 bytes that cross the
 wire each iteration are one $n$-vector at $n = 77$, not the Driver's footprint.)
 That is the property the
-distributed route buys, and the measured 6.7–8.0x is its price at this scale —
+distributed route buys, and the measured 6.7–8.0x is its price at this scale,
 not a claim that it is faster here, which it is not.
 
 What this dataset adds is that the property cannot always be bought. The same
@@ -405,8 +405,8 @@ For the centred matrix, the SVD $A = U\Sigma V^\top$ gives
 
 $$A^\top A = V\Sigma^\top U^\top U \Sigma V^\top = V\Sigma^2 V^\top$$
 
-using $U^\top U = I$. So the columns of $V$ are the eigenvectors of $A^\top A$ —
-the principal directions — and the eigenvalues are $\lambda_i = \sigma_i^2$. The
+using $U^\top U = I$. So the columns of $V$ are the eigenvectors of $A^\top A$ (
+the principal directions) and the eigenvalues are $\lambda_i = \sigma_i^2$. The
 projection onto the top $k$ components is $A V_k$, which is again a per-row
 operation and so is a distributed map with no shuffle at all.
 
@@ -427,7 +427,7 @@ full feature set against $0.7034$ through `PCA(k=10)`.
 That is not a bug, it is what PCA does to this kind of feature space. Most of the
 dimensions are one-hot indicators, which are close to mutually orthogonal and
 individually low-variance, so there is little linear redundancy for PCA to
-exploit — variance is spread thinly across many directions rather than
+exploit; variance is spread thinly across many directions rather than
 concentrated in a few. PCA pays off when features are strongly correlated; one-hot
 expansions of independent categoricals are close to the opposite case. The scree
 curve in `docs/benchmarks/pca_explained_variance.png` shows exactly that shape:
@@ -448,11 +448,11 @@ categories. On a small cross-validation fold that slot never fires, so the colum
 is constant; `StandardScaler` maps a zero-variance column to all zeros (A1.1); and
 the covariance matrix is then **singular**. LAPACK's driver failed to converge on
 it rather than degrading gracefully. Diagnostically, the feature matrix contained
-no NaN and no Inf — 3 of 80 columns were identically zero.
+no NaN and no Inf; 3 of 80 columns were identically zero.
 
 The fix is a `VarianceThresholdSelector` ahead of PCA, dropping zero-variance
 columns. It is both the repair and the correct modelling choice: a constant
-feature carries no information by definition. Note the interaction — the bug
+feature carries no information by definition. Note the interaction: the bug
 surfaced only at small sample sizes, because on the full data most categories
 appear in every fold. Testing at reduced scale is what exposed it.
 
@@ -470,14 +470,14 @@ with `regParam` $=\lambda$ and `elasticNetParam` $=\alpha$.
 
 The two penalties do different jobs. The $\ell_2$ term has gradient $\lambda(1-\alpha)\beta$,
 which shrinks coefficients smoothly toward zero without reaching it, and adds
-$\lambda(1-\alpha)I$ to the normal equations — so $X^\top X + \lambda(1-\alpha)I$ is
+$\lambda(1-\alpha)I$ to the normal equations, so $X^\top X + \lambda(1-\alpha)I$ is
 invertible even when $X^\top X$ is not. That directly buys stability under the
 collinearity our features have (`DISTANCE`, `GC_DISTANCE_MI` and `SCHEDULED_TIME`
 are near-collinear by construction).
 
 The $\ell_1$ term is not differentiable at zero; its subgradient is constant
 $\pm\lambda\alpha$, so it applies the same push regardless of coefficient size and
-drives small coefficients exactly to zero. That yields genuine sparsity —
+drives small coefficients exactly to zero. That yields genuine sparsity:
 selection, not just shrinkage.
 
 **Why the zeros are exact: the soft-thresholding solution.** Minimise $J$ in one
@@ -504,7 +504,7 @@ S(z,\gamma) = \operatorname{sign}(z)\max\left(\lvert z\rvert - \gamma,\ 0\right)
 This makes the division of labour explicit. The **numerator** is the $\ell_1$
 contribution: a *threshold*, and because the subdifferential at zero is an interval
 rather than a point, an entire range $\lvert\rho_j\rvert \le \lambda\alpha$ maps to
-exactly zero — that is the source of the sparsity, and it is why ridge cannot
+exactly zero; that is the source of the sparsity, and it is why ridge cannot
 produce it. The **denominator** is the $\ell_2$ contribution: a uniform
 *shrinkage* factor that never reaches zero. Setting $\alpha = 0$ leaves
 $\hat{\beta}_j = \rho_j/(1+\lambda)$, which vanishes only if $\rho_j$ does.
@@ -531,7 +531,7 @@ identity link. The link earns its keep when the identity is wrong about the
 response's *support* or its *mean–variance relationship*.
 
 Arrival delay is a good example. Delay is strongly right-skewed and its dispersion
-grows with its level — a flight averaging 5 minutes late varies by minutes, one
+grows with its level: a flight averaging 5 minutes late varies by minutes, one
 averaging 200 minutes late varies by tens of minutes. Ordinary least squares
 assumes constant variance and so is systematically misspecified.
 
@@ -543,7 +543,7 @@ assumes constant variance and so is systematically misspecified.
 
 With a **log link**, $\log\mu = X\beta \Rightarrow \mu = e^{X\beta}$. Two
 consequences: $\mu > 0$ is guaranteed for any $\beta$, and coefficients become
-multiplicative — $\beta_j$ is a proportional change in expected delay per unit of
+multiplicative: $\beta_j$ is a proportional change in expected delay per unit of
 $x_j$, not an additive one. Gamma's $V(\mu) = \mu^2$ means constant *coefficient of
 variation*, which matches delay behaviour better than constant absolute variance.
 
@@ -555,7 +555,7 @@ weighted regression, so a GLM costs a small multiple of an OLS fit.
 > **A constraint the brief's setup creates.** The constraint comes from the
 > *family's support*, not from the link: Poisson is supported on
 > $\{0,1,2,\dots\}$ and Gamma on $(0,\infty)$, so both need $y \ge 0$. The log
-> link constrains only the **mean** — $\mu = e^{X\beta} > 0$ for any $\beta$ — and
+> link constrains only the **mean** ($\mu = e^{X\beta} > 0$ for any $\beta$) and
 > says nothing about $y$. Arrival delay is *negative* for early flights, which is
 > **61.3%** of the feed (3,494,095 of 5,704,000 rows, minimum $-87$ minutes). We therefore fit the GLM on $y + c$ with the constant
 > $c = |\min(y, 0)| + 1$ computed once on the training data. Because RMSE, MAE and
@@ -576,8 +576,8 @@ $$\min_{w,b,\xi} \; \frac{1}{2}\lVert w\rVert^2 + C\sum_{i=1}^{n}\xi_i
 
 The slack variables can be eliminated. For fixed $(w,b)$ the objective is strictly
 increasing in each $\xi_i$, so at the optimum every $\xi_i$ is driven down to the
-smallest value its two constraints permit — $\xi_i \ge 1 - y_i(w^\top x_i + b)$ and
-$\xi_i \ge 0$ — giving
+smallest value its two constraints permit ($\xi_i \ge 1 - y_i(w^\top x_i + b)$ and
+$\xi_i \ge 0$), giving
 $\xi_i^{\star} = \max\left(0,\, 1 - y_i(w^\top x_i + b)\right)$. Substituting
 $\xi^{\star}$ back removes the constraints entirely and yields the unconstrained
 **hinge-loss** form:
@@ -592,7 +592,7 @@ subgradient of the objective is
 
 $$\partial_w = w - C\!\!\sum_{i\,:\,m_i < 1}\!\! y_i x_i$$
 
-Every point with $m_i > 1$ — correctly classified *and* beyond the margin — drops
+Every point with $m_i > 1$ (correctly classified *and* beyond the margin) drops
 out of the sum entirely, contributing exactly nothing however far away it is. Only
 points on or inside the margin, or misclassified, appear at all: those are the
 support vectors, and the solution is a function of them alone. This is what
@@ -606,14 +606,14 @@ optimises via subgradients (OWL-QN).
 $$\frac{1}{n}\sum_{i=1}^{n}\max\left(0, 1 - y'_i\left(w^\top x_i + b\right)\right) + \frac{\lambda}{2}\lVert w\rVert^2$$
 
 with $y'_i \in \{-1, +1\}$ recoded from the $\{0,1\}$ label. Comparing to the form
-above, $C \leftrightarrow \frac{1}{n\lambda}$ — so **larger `regParam` means
+above, $C \leftrightarrow \frac{1}{n\lambda}$, so **larger `regParam` means
 *weaker* regularisation in $C$ terms**, the opposite of the direction people
 usually expect. LinearSVC is also linear-only in Spark: there is no kernel trick,
 because the dual formulation needs an $n \times n$ Gram matrix, which at
 $n = 4.5$M is $2 \times 10^{13}$ entries and hopeless. Scaling matters for exactly
-this reason — the $\ell_2$ penalty is not scale-invariant.
+this reason: the $\ell_2$ penalty is not scale-invariant.
 
-### A3.4 Random Forest — bagging and parallel tree growth
+### A3.4 Random Forest: bagging and parallel tree growth
 
 Two independent randomisations decorrelate the trees.
 
@@ -623,7 +623,7 @@ $\left(1 - \frac{1}{n}\right)^n \to e^{-1} \approx 0.368$, so each tree sees abo
 63.2% of the distinct rows and the remaining ~37% form its out-of-bag set.
 
 **Feature subspace sampling.** At *each node*, only a random subset of $m$ of the
-$p$ features is considered — $m = \sqrt{p}$ for classification, $m = p/3$ for
+$p$ features is considered: $m = \sqrt{p}$ for classification, $m = p/3$ for
 regression (Spark's `featureSubsetStrategy="auto"`).
 
 Why both are needed: bagging alone leaves the trees highly correlated, because a
@@ -645,7 +645,7 @@ every tree, so the number of data passes is $O(\text{depth})$ rather than
 $O(B \times \text{depth})$. `maxMemoryInMB` caps how many nodes are processed per
 pass.
 
-### A3.5 Gradient-Boosted Trees — sequential residual fitting
+### A3.5 Gradient-Boosted Trees: sequential residual fitting
 
 Boosting builds an additive model stage-wise:
 
@@ -657,27 +657,27 @@ prediction,
 $$r_{im} = -\left[\frac{\partial L(y_i, F(x_i))}{\partial F(x_i)}\right]_{F = F_{m-1}}$$
 
 and $\nu$ is the learning rate. For squared error, $L = \frac{1}{2}(y - F)^2$ gives
-$r_{im} = y_i - F_{m-1}(x_i)$ — the residuals, which is where "fitting the
+$r_{im} = y_i - F_{m-1}(x_i)$, the residuals, which is where "fitting the
 residuals" comes from; it is the special case, not the definition.
 
 **Histogram binning and `maxBins`.** Exact split-finding on a continuous feature
 would sort every value at every node: $O(n\log n)$ per feature per node, and a sort
 is a shuffle. Instead Spark discretises each continuous feature *once* into at most
 `maxBins` intervals via a sampled quantile sketch. Split finding then reduces to
-accumulating per-bin sufficient statistics — one pass, $O(n)$ with no shuffle — and
+accumulating per-bin sufficient statistics (one pass, $O(n)$ with no shuffle) and
 scanning $O(\text{maxBins})$ candidate thresholds. `maxBins` is the accuracy/cost
 dial: too few and genuine thresholds are unavailable; too many and both memory and
 scan cost rise. It must also be $\ge$ the largest categorical arity, which is why
 our grid uses 32 and 64 against a maximum arity of 24 (`DEP_HOUR`).
 
 **Why trees cannot be built in parallel.** $h_m$ is fitted to residuals of
-$F_{m-1}$, so tree $m$ cannot start before tree $m-1$ finishes — a genuine
+$F_{m-1}$, so tree $m$ cannot start before tree $m-1$ finishes, a genuine
 sequential dependency, unlike bagging's conditional independence. The parallelism
 is therefore *within* each tree: across partitions when accumulating histograms,
 and across features and bins when evaluating splits. The practical consequences
 are that GBT makes $O(M \times \text{depth})$ passes where RF makes
 $O(\text{depth})$, that adding executors stops helping much sooner, and that GBT
-overfits with more trees whereas RF does not — RF averages, so extra trees only
+overfits with more trees whereas RF does not: RF averages, so extra trees only
 reduce variance, while boosting keeps reducing *bias* against the training set.
 
 **Where the tuning effort goes.** This asymmetry is why our grids differ: RF is
@@ -698,11 +698,11 @@ likely to overfit and the most expensive to search.
 
 ---
 
-# Part B — Implementation and results
+# Part B: Implementation and results
 
 ## B1. Data preparation and the leakage boundary
 
-### B1.1 The leakage policy — the single most important decision here
+### B1.1 The leakage policy: the single most important decision here
 
 The prediction point is fixed at **wheels-off**: the aircraft has pushed back and
 left the ground, so departure delay and taxi-out are legitimately known, and the
@@ -723,7 +723,7 @@ them exist yet. We also drop `ARRIVAL_DELAY` itself after deriving the labels, s
 no unlabelled copy of the target remains in the table to be picked up by accident.
 
 **How to check this held.** At the wheels-off horizon, expect $R^2 \approx
-0.85\text{–}0.92$ — departure delay legitimately dominates arrival delay. A result
+0.85\text{–}0.92$, departure delay legitimately dominates arrival delay. A result
 near 0.99 means a leak survived.
 
 ### B1.2 Schema drift: the October airport codes
@@ -734,15 +734,15 @@ numeric DOT airport ids (`14747`) where every other month carries IATA codes
 
 | months affected | rows affected | distinct numeric codes |
 |---|---|---|
-| October only (month 10) | 486,165 — *every* October row | 307 |
+| October only (month 10) | 486,165, *every* October row | 307 |
 
 Since `airports.csv` is keyed by IATA only, the naive join silently drops all
-486,165 rows — no error, just 8% of the year missing and every October flight
+486,165 rows: no error, just 8% of the year missing and every October flight
 without coordinates. We recover the mapping **from the data itself**
 (`scripts/build_airport_code_map.py`) using two independent signals, because
 neither is sufficient alone.
 
-**Signal 1 — direction-aware flight-number vote.** A flight number flies the same
+**Signal 1: direction-aware flight-number vote.** A flight number flies the same
 route all year, so key on `(AIRLINE, FLIGHT_NUMBER, DISTANCE)` and read off the
 IATA code the other eleven months show on the same key. One subtlety: some
 carriers reuse a flight number for both legs of a round trip, so that key can
@@ -750,20 +750,20 @@ describe A→B on some days and B→A on others, letting an origin code collect 
 for the destination airport. We therefore vote only from keys whose direction is
 unambiguous. This resolves 300/307 codes and is reliable where votes are plentiful.
 
-**Signal 2 — geometric fit.** Every row carries its own route `DISTANCE`, so an
+**Signal 2: geometric fit.** Every row carries its own route `DISTANCE`, so an
 unknown code can be located by trilateration: score each candidate airport by how
 well it reproduces the observed distances to its already-known partners, and take
 the best fit. A candidate is accepted only if the fit is tight (≤10 mi) *and*
-decisive against the runner-up — either a 25 mi absolute margin or a 5× ratio,
+decisive against the runner-up: either a 25 mi absolute margin or a 5× ratio,
 the latter being what makes a two-anchor fit safe.
 
 **Why both.** Swapping a route's endpoints leaves its great-circle distance
-unchanged, so signal 2 is blind to a transposition — which is exactly what signal
+unchanged, so signal 2 is blind to a transposition, which is exactly what signal
 1's direction-awareness prevents. Conversely signal 1 fails in the thin tail
 (some codes get two votes), which is where signal 2 is decisive.
 
 **Verification, and why it had to be per-code.** Pooled statistics looked
-excellent from the very first attempt — median error 0.96 mi across 486k rows —
+excellent from the very first attempt (median error 0.96 mi across 486k rows)
 while five codes were badly wrong. A mis-mapped airport is wrong on *every* row it
 appears in, so it shows as a large **median** for that code, but at ~1,500 rows
 each out of 486,165 it barely moves the global median. Scoring each code
@@ -779,8 +779,8 @@ separately exposed them immediately:
 
 **Outcome.** 302 of 307 codes resolved and geometrically verified; the mapping is
 injective; worst per-code error 3.25 mi; **485,280 of 486,165 October rows (99.8%)
-recovered**. The five remaining codes had no confident fit — best candidates 7.8
-to 235 mi off — and are left unmapped rather than guessed, costing 885 rows
+recovered**. The five remaining codes had no confident fit (best candidates 7.8
+to 235 mi off) and are left unmapped rather than guessed, costing 885 rows
 (0.015% of the dataset). Refusing to assert an unsupported mapping is the right
 call; the alternative would have put wrong coordinates into the haversine feature.
 
@@ -793,7 +793,7 @@ call; the alternative would have put wrong coordinates into the haversine featur
 | after dropping missing airport coordinates | 5,704,000 |
 | **final curated** | **5,704,000 (98.0%)** |
 
-Severe-delay rate (`ARRIVAL_DELAY > 30`): **11.08%** — a moderately imbalanced
+Severe-delay rate (`ARRIVAL_DELAY > 30`): **11.08%**, a moderately imbalanced
 binary problem, which is why the classification arm reports AUC-PR alongside
 AUC-ROC.
 
@@ -808,7 +808,7 @@ on every read.
 The brief says "subclass `pyspark.ml.Transformer` to compute $Q_1, Q_3$ bounds and
 clip". Implemented literally, that is a leak. A `Transformer` has only
 `_transform`, so it must recompute its quantiles from whatever DataFrame it is
-handed — meaning that applied to the test split it would fit itself to test data,
+handed, meaning that applied to the test split it would fit itself to test data,
 and applied to a streaming micro-batch it would compute quantiles over a handful
 of rows, giving different clipping behaviour on every batch.
 
@@ -816,21 +816,21 @@ Clipping fences are **learned parameters**. So `OutlierIQRTruncator` is an
 `Estimator` whose `_fit` computes the fences on the training split only and
 freezes them into `OutlierIQRTruncatorModel`. Our Phase 2 test asserts both halves
 of this: that test data *would* have produced different fences (so the risk is
-real — 1 of 3 columns differs), and that `transform(test)` nonetheless respects the
+real: 1 of 3 columns differs), and that `transform(test)` nonetheless respects the
 training fences exactly.
 
 **This still satisfies the requirement literally.** In PySpark,
 `pyspark.ml.Model` *is* a subclass of `pyspark.ml.Transformer`
-(`issubclass(Model, Transformer)` is `True`), so `OutlierIQRTruncatorModel` — the
+(`issubclass(Model, Transformer)` is `True`), so `OutlierIQRTruncatorModel` (the
 object that actually does the clipping inside the fitted `PipelineModel`, and the
-object that ships to streaming — **is** a `pyspark.ml.Transformer` subclass
+object that ships to streaming) **is** a `pyspark.ml.Transformer` subclass
 operating natively on DataFrames. The Estimator half adds a `fit` step in front of
 it; it does not replace the Transformer. `HaversineTransformer` and
 `SignedLog1pTransformer` subclass `Transformer` directly, so the pipeline carries
 both forms.
 
 Quantiles come from `approxQuantile`, a distributed Greenwald–Khanna sketch:
-single pass, $O(1/\varepsilon)$ memory per partition, all columns in one go —
+single pass, $O(1/\varepsilon)$ memory per partition, all columns in one go,
 versus a full sort of 5.7M rows.
 
 Fitted fences (full training split): `DEPARTURE_DELAY` $[-23, 25]$,
@@ -840,7 +840,7 @@ Fitted fences (full training split): `DEPARTURE_DELAY` $[-23, 25]$,
 
 `haversine_miles_udf` is a Series-to-Series `pandas_udf`. Spark hands whole Arrow
 record batches to Python, so the trigonometry runs once over a NumPy array at C
-speed rather than once per row through the interpreter — no per-row
+speed rather than once per row through the interpreter: no per-row
 serialisation and no Python-level loop. It is invoked from inside a Pipeline stage
 (`HaversineTransformer`), not as a loose DataFrame operation, so the feature
 engineering travels with the serialized model and is reproduced identically at
@@ -851,8 +851,8 @@ source table, so `haversine_miles` is by construction a duplicate of a column we
 already have. It is kept deliberately, for two reasons.
 
 The first is that it makes the pair a *cross-check*. Two measurements of the same
-quantity from independent sources — one published by the DOT, one derived from
-airport coordinates — agree or they do not, and where they do not, one of the two
+quantity from independent sources (one published by the DOT, one derived from
+airport coordinates) agree or they do not, and where they do not, one of the two
 inputs is wrong. Across all 5,704,000 curated rows the agreement is a **median of
 0.97 mi** (p95 4.66, p99 5.97), the residual being the gap between airport
 reference points and published route distance.
@@ -869,7 +869,7 @@ those, 85 disagree by more than 5 miles and exactly **two** by more than 100:
 | HNL–PPG | 1,630 mi | `airports.csv` gives PPG latitude $+14.331$; Pago Pago is at $-14.331$ |
 
 Both are sign errors in the Kaggle `airports.csv`, and neither is visible in the
-pooled figure — they move the median by nothing, because they touch 875 rows of
+pooled figure; they move the median by nothing, because they touch 875 rows of
 5.7 million (0.015%). The same lesson appears in the October code repair (§B1.2),
 where a pooled median error of 0.96 mi looked excellent while five individual
 mappings were badly wrong: aggregate agreement measures the bulk, and data errors
@@ -882,15 +882,15 @@ is what matters: without the duplicate, there is no way to know the coordinates
 are wrong.
 
 A second UDF, `schedule_speed_udf`, computes the implied ground speed of the
-published schedule — a domain pressure metric, since a leg scheduled at unusually
+published schedule, a domain pressure metric, since a leg scheduled at unusually
 high implied speed has little slack for a departure delay to absorb.
 
 ### B2.3 Leakage-safe target encoding
 
 `ORIGIN_AIRPORT` (319), `DESTINATION_AIRPORT` (319) and `ROUTE` (4,635 levels) are
-too high-cardinality for one-hot encoding — `ROUTE` alone would add 4,634 columns
+too high-cardinality for one-hot encoding: `ROUTE` alone would add 4,634 columns
 and, per A1.2, dominate the sparsity budget. (The fitted encoder holds 4,627
-routes, slightly fewer, because it learns from the training split only — which is
+routes, slightly fewer, because it learns from the training split only, which is
 exactly the leak-safety property being claimed.) Target encoding replaces each category
 with a smoothed mean of the target:
 
@@ -904,7 +904,7 @@ Leak-safety is **structural**: the means are computed in `_fit`, so a Pipeline
 fitted on the training split cannot see test targets, and because `CrossValidator`
 refits the whole Pipeline per fold, each fold's encoding is computed from that
 fold's training portion only. Unseen categories fall back to the prior rather than
-producing nulls — verified in the Phase 2 test.
+producing nulls, verified in the Phase 2 test.
 
 **The remaining subtlety, stated honestly.** A training row still contributes to
 its own category's mean, so its own target leaks into its own feature. With ~1,300
@@ -915,7 +915,7 @@ it would be required rather than optional.
 ### B2.4 Serialization, and why it is the crux
 
 Phase 4 loads a serialized `PipelineModel`, so any parameter that will not
-round-trip breaks streaming inference — and nothing earlier would notice. Every
+round-trip breaks streaming inference, and nothing earlier would notice. Every
 custom class mixes in `DefaultParamsReadable`/`DefaultParamsWritable`, and
 `TargetEncoderModel` carries its fitted mapping as a **JSON string Param**. That
 keeps it inside the default writer with no custom `MLWriter`/`MLReader`. A Parquet
@@ -928,7 +928,7 @@ save → load → identical-output round trip.
 The first working pipeline took **146 s to fit** on 114k rows while its stages cost
 ~4 s in isolation. The cause is structural, not a bug: `Pipeline.fit` fits each
 stage against the *lazy* output of the stages before it and never caches in
-between, so every fitted stage downstream re-executes the whole upstream chain —
+between, so every fitted stage downstream re-executes the whole upstream chain,
 and iterative learners (LinearRegression, PCA's SVD, LinearSVC, GBT) re-execute it
 once per iteration.
 
@@ -940,12 +940,12 @@ fitted stages one at a time showed `TargetEncoderModel` alone taking a pass from
 call, each costing a pickle, a parallelize job and a broadcast exchange. Replacing
 the broadcast join with a literal `create_map` expression made execution ~60×
 cheaper (0.10 s vs 6 s per pass) at the cost of 6.3 s of driver-side plan
-construction — which is then paid **once**, because Column expressions are
+construction, which is then paid **once**, because Column expressions are
 independent of any particular DataFrame and can be memoised across transforms. A
 broadcast-join fallback is retained above 20,000 categories.
 
 **2. Caching at fit time only.** A cache stage after the feature engineering cut
-fitting from 51 s to 35 s, but *raised* transform cost from 0.28 s to 6.5 s — a 23×
+fitting from 51 s to 35 s, but *raised* transform cost from 0.28 s to 6.5 s, a 23×
 penalty on every scoring call, including each fold's evaluation, because every
 stage after that point is a single-pass projection that never needed
 materialising. Splitting it into an `Estimator` whose `_fit` persists and a `Model`
@@ -1011,13 +1011,13 @@ hiding. The linear models all chose the smallest regularisation offered
 models mostly chose the largest capacity offered (`maxDepth` 10 for RF, 6 for GBT,
 `numTrees` 80, `maxBins` 64). Two arms are the exceptions and go the other way:
 `random_forest_regressor__nopca` preferred 40 trees to 80, and
-`gbt_classifier__nopca` preferred depth 4 to depth 6 — on un-rotated features both
+`gbt_classifier__nopca` preferred depth 4 to depth 6: on un-rotated features both
 have enough signal per split that the extra capacity only added variance.
 
 The dominant direction is what 4.5M training rows predict: the variance term is
 small at this sample size, so penalising coefficients mostly adds bias, and the
 trees have not yet reached the depth where they overfit. It does mean the grids
-bracket the optimum from one side only — a wider search would likely gain the
+bracket the optimum from one side only; a wider search would likely gain the
 tree arms a little and leave the linear winner where it is, since `regParam` is
 already pinned to its floor. The cost table below shows why widening was not worth
 the compute: the arms differ by far more than a grid step.
@@ -1058,7 +1058,7 @@ result rather than an anticlimax. Arrival delay is very nearly an affine functio
 of departure delay ($r = 0.9446$): a flight that pushes back 40 minutes late lands
 about 40 minutes late. A single coefficient captures that exactly. Both ensembles
 must approximate the same straight line with piecewise-constant regions, spending
-depth budget to do worse — GBT reaches $R^2$ 0.894 and Random Forest 0.873 against
+depth budget to do worse: GBT reaches $R^2$ 0.894 and Random Forest 0.873 against
 linear regression's **0.929**, while costing 2.1× and 1.7× the wall-clock time.
 This is the honest answer to the brief's parametric-vs-ensemble comparison: model
 capacity beyond the true functional form buys nothing, and axis-aligned splits are
@@ -1090,13 +1090,13 @@ The one arm PCA *improves* is the Poisson GLM, and it is the exception that conf
 the reading rather than complicating it. That arm is broken by its link function, not
 by its features (§B4 below): fed the raw `DEPARTURE_DELAY` column, an exponential link
 produces wildly overshooting predictions, which is how a regressor reaches $R^2$
-−0.036 — worse than predicting the mean. PCA's centred, rotated components present no
+−0.036, worse than predicting the mean. PCA's centred, rotated components present no
 single dominant column for the exponential to amplify, so the same broken model
 degrades more gracefully. A model improving when information is *removed* from it is a
 diagnosis of that model, not a defence of the transform.
 
 **Classification is a three-way tie decided on cost.** GBT (0.9817), LinearSVC
-(0.9806) and Random Forest (0.9792) are separated by 0.0025 AUC — well inside what
+(0.9806) and Random Forest (0.9792) are separated by 0.0025 AUC, well inside what
 a different seed would move. But LinearSVC reaches that in **959 s against GBT's
 2,336 s**, a 2.4× difference, because boosting fits its trees sequentially and
 cannot parallelise across them (§A3.3) while a linear SVM's hinge-loss objective is
@@ -1107,13 +1107,13 @@ they are buying time.
 
 **The GLM underperforms for a structural reason, not a tuning one.** Poisson/log
 reaches $R^2$ 0.531 (PCA) and −0.036 (no-PCA), far behind every other regressor. A
-log link models $\mu = \exp(\mathbf{x}^\top\beta)$ — a *multiplicative* response —
+log link models $\mu = \exp(\mathbf{x}^\top\beta)$ (a *multiplicative* response)
 while the true relationship is *additive*: arrival delay is departure delay plus a
 roughly constant taxi-and-cruise term. Compounding this, the log link requires a
 strictly positive response, so the label is shifted by $+88$ minutes; the model must
 then reproduce an additive shift through an exponential, which it can only do over a
 narrow range. The residual RMSE/MAE ratio of 3.5 (40.14 / 11.48) shows the failure
-mode directly — the median prediction is reasonable while a thin tail of
+mode directly: the median prediction is reasonable while a thin tail of
 $\exp(\mathbf{x}^\top\beta)$ blow-ups dominates the squared error.
 
 This replaced an earlier Gamma/log arm that failed far more violently ($R^2 = -207$,
@@ -1147,8 +1147,8 @@ cross-validation runs automatically; metrics, the explained-variance artifact an
 the feature-importance artifacts are logged explicitly, and the winning regression
 pipeline is registered and promoted **Staging → Production**.
 
-MLflow is pinned to **2.x deliberately**: `transition_model_version_stage` — the
-stage API the brief specifies — is removed in MLflow 3.x in favour of aliases.
+MLflow is pinned to **2.x deliberately**: `transition_model_version_stage` (the
+stage API the brief specifies) is removed in MLflow 3.x in favour of aliases.
 
 ## B6. Serialization and streaming inference
 
@@ -1159,15 +1159,15 @@ checkpointing. Scoring is stateless, so each micro-batch is independent.
 
 Two details that make it work:
 
-* `custom_transformers.py` must be importable when the model deserializes — the
-  saved metadata refers to those classes by qualified name — hence `--py-files` in
+* `custom_transformers.py` must be importable when the model deserializes: the
+  saved metadata refers to those classes by qualified name, hence `--py-files` in
   `submit_pipeline.sh`.
 * A file-source stream cannot infer its schema, so the training run publishes
   `models/input_schema.json` next to the model and the streaming job declares it.
   That file *is* the serving contract.
 
 `MaterializeCache` returns the DataFrame untouched for streaming inputs, since
-caching is unsupported there — which is why it was built as a fit-time Estimator
+caching is unsupported there, which is why it was built as a fit-time Estimator
 rather than a Transformer (B2.5).
 
 ---
