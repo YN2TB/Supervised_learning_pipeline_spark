@@ -923,7 +923,7 @@ side-car would scale to far larger vocabularies at the cost of custom IO code; a
 a few thousand keys JSON is comfortable. The Phase 2 test asserts a full
 save → load → identical-output round trip.
 
-### B2.5 Performance: a 6× fit speedup and 60× transform speedup
+### B2.5 Performance: a 5.9× fit speedup, and what scoring actually costs
 
 The first working pipeline took **146 s to fit** on 114k rows while its stages cost
 ~4 s in isolation. The cause is structural, not a bug: `Pipeline.fit` fits each
@@ -938,9 +938,9 @@ Two fixes, both measured rather than assumed:
 fitted stages one at a time showed `TargetEncoderModel` alone taking a pass from
 0.08 s to 13.18 s: it rebuilt three lookup DataFrames from Python objects on every
 call, each costing a pickle, a parallelize job and a broadcast exchange. Replacing
-the broadcast join with a literal `create_map` expression made execution ~60×
-cheaper (0.10 s vs 6 s per pass) at the cost of 6.3 s of driver-side plan
-construction, which is then paid **once**, because Column expressions are
+the broadcast join with a literal `create_map` expression removes the exchange
+and the extra job, leaving a plain projection Catalyst fuses into the scan, at
+the cost of 6.3 s of driver-side plan construction, which is then paid **once**, because Column expressions are
 independent of any particular DataFrame and can be memoised across transforms. A
 broadcast-join fallback is retained above 20,000 categories.
 
@@ -953,14 +953,74 @@ whose `_transform` is a no-op captures both sides: `persist` marks the logical
 plan so subsequently-fitted stages hit the cache, while the saved model carries no
 caching behaviour into scoring or streaming at all.
 
-| | fit | transform |
-|---|---|---|
-| original | 146 s | 19.7 s |
-| + fit-time cache, cached map expression | **24.6 s** | **0.32 s** |
-| | **5.9× faster** | **62× faster** |
+| | fit, 114k rows |
+|---|---|
+| original | 146 s |
+| + fit-time cache, cached map expression | **24.6 s** |
+| | **5.9× faster** |
 
 Verified semantically neutral: after the optimisation the Phase 2 test reports
 byte-identical column totals.
+
+**A withdrawn figure, and why.** Earlier drafts of this section carried a
+transform column beside the one above: 19.7 s falling to 0.32 s, a 62× speedup.
+That measurement is not sound and the claim is retracted. It timed
+`model.transform(df).count()`, and `count()` consumes none of the computed
+columns, so Catalyst's column pruning is free to delete the projections
+entirely: the map lookups, the PCA multiply and the forest never execute. The
+symptom is unmistakable once looked for. Re-run across four sizes, the timing
+was flat at roughly 0.3 s from 10,000 rows to 800,000, implying a *negative*
+marginal cost per row.
+
+A fit cannot be pruned this way, because the parameters it produces are what the
+next stage is built from, so the fit column above stands. `scripts/profile_stages.py`
+shares the flaw and its `transform` column should be read with the same caution;
+its `fit` column is sound.
+
+**What scoring costs, measured with an aggregation that cannot be pruned**
+(`.agg(sum("prediction"))`, best of 3, warmed at the largest size first):
+
+| rows | seconds | μs/row |
+|---|---|---|
+| 25,000 | 2.451 | 98.05 |
+| 100,000 | 3.791 | 37.91 |
+| 400,000 | 9.437 | 23.59 |
+| 1,600,000 | 43.733 | 27.33 |
+
+Fitting a line through the ends gives **1.8 s of fixed cost per call plus about
+26 μs per row**, so the full 5,704,000-row feed scores in roughly 150 s. The
+fixed component is Catalyst planning, code generation, JIT warm-up and one task
+launch per partition; it is why a 40-row streaming micro-batch is not
+proportionally faster, and why per-row cost falls from 98 to about 25 μs as that
+overhead amortises.
+
+**Where the fit time goes.** Profiled stage by stage on the same 114k sample,
+`RowMatrixPCA` dominates at **108 s of the 135 s** total, which is ARPACK
+iterating against the flat spectrum of §A2.1 showing up as wall clock. The
+costly upstream fits are `Imputer` at 14.1 s and `StringIndexer` at 15.4 s, both
+of which aggregate. These per-stage figures are inflated by the upstream replay
+the profiler does not isolate, so they rank the stages rather than cost them
+exactly.
+
+**What the Arrow requirement costs.** The brief asks for an Arrow `pandas_udf`
+executing inside feature processing, and `haversine_miles_udf` satisfies it. The
+price is measurable, because every function in the formula also exists as a
+Catalyst expression. On all 5,704,000 rows, with identical checksums:
+
+| | time | μs/row |
+|---|---|---|
+| `pandas_udf` through Arrow | 14.70 s | 2.59 |
+| the same formula in native Catalyst | 0.05 s | 0.01 |
+
+**294× for an identical result.** The trigonometry itself is not the cost: run
+in isolation over the same arrays, NumPy computes it in **0.237 s**, which is
+1.6% of the 14.70 s. The other 98.4% is the process boundary, converting Spark's
+row format into Arrow batches, piping them to a Python worker, and the reverse
+for the result. Arrow is what keeps this at 2.6 μs/row rather than the 10 to 100×
+worse a row-at-a-time UDF would pay, because the function body runs once per
+20,000-row batch instead of once per row. It does not make the crossing free.
+A `pandas_udf` earns its place where Catalyst has no equivalent expression, which
+is not the case here.
 
 ## B3. Pipeline architecture
 

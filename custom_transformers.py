@@ -241,8 +241,20 @@ class MaterializeCache(Estimator, DefaultParamsReadable, DefaultParamsWritable):
     Caching during ``transform`` is the opposite trade: every stage after this
     point is a plain projection consumed in a single pass, so persisting only
     adds a materialisation the query never needed. The same measurement put a
-    cached transform at 6.5s against 0.28s uncached - a 23x penalty paid on
+    cached transform at 6.5s against 0.28s uncached, a 23x penalty paid on
     every scoring call, including each cross-validation fold's evaluation.
+    (Both transform figures were timed with ``.count()``, which lets Catalyst
+    prune the projections; treat the ratio as indicative and the absolute
+    numbers as unverified. See REPORT B2.5.)
+
+    On where to put it: an earlier version of this note claimed the expensive
+    work behind this point was the Arrow UDF and the target-encoding joins.
+    Profiling says otherwise. The costly upstream fits are Imputer at 14.1s and
+    StringIndexer at 15.4s, both aggregations, while the dominant cost of the
+    whole fit is RowMatrixPCA at 108s of 135s - and that sits *downstream* of
+    this stage. The placement still earns its keep, because PCA is a fit that
+    replays the chain and a cache above it saves the most, but whether stage 11
+    would be better has not been tested.
 
     Splitting it into an Estimator whose ``_fit`` persists and a Model whose
     ``_transform`` is a no-op gets both: ``persist`` marks the logical plan, so
