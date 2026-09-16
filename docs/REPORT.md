@@ -962,13 +962,30 @@ caching behaviour into scoring or streaming at all.
 Verified semantically neutral: after the optimisation the Phase 2 test reports
 byte-identical column totals.
 
-**Those two figures are historical and do not reproduce.** They were taken
-against the pre-fix code, which no longer exists, so the 5.9× cannot be
-re-derived. Re-running the current pipeline on the same 114,370-row sample gives
-**46.4 s without PCA and 153.3 s with it**, so the 22 s between 24.6 and 46.4 is
-unaccounted for: the original benchmark's stage list, estimator and machine state
-were not recorded. The direction of the result is not in doubt, the precise ratio
-is. Today's numbers are the ones on the slide.
+**Both fixes are re-measurable, because both pre-fix paths are still reachable.**
+The broadcast join is the branch taken above `MAX_INLINE_CATEGORIES`, so setting
+that constant to 0 forces it; `MaterializeCache` is a stage, so it can be left out
+of the list. Fitting all four combinations on the same 114,370-row sample, PCA
+excluded because at ~107 s it would swamp the comparison:
+
+| target encoding | fit-time cache | fit |
+|---|---|---|
+| broadcast join | off | 151.9 s |
+| broadcast join | on | 109.0 s |
+| cached map expression | off | 104.1 s |
+| cached map expression | on | **45.4 s** |
+
+**3.35× end to end**, and the two fixes are *superadditive*: 47.8 s saved by the
+map alone and 42.9 s by the cache alone, but 106.5 s together. They compound
+because the cache removes replays of the encoder while the map makes each
+remaining replay cheap.
+
+Two caveats. The join branch measured here is memoised, which the original was
+not, so 151.9 s understates the true starting point. And the historical pair
+above only half reproduces: the 146 s "original" is confirmed (151.9 s today,
+inside the run variance below), while the 24.6 s "optimised" is not, and the
+configuration that produced it was never recorded. The 5.9× should be read as
+3.35×.
 
 **Run-to-run variance is larger than it looks.** The same PCA fit measured
 134.9 s when profiled stage by stage and 153.3 s when timed as one call, a spread
