@@ -962,6 +962,26 @@ caching behaviour into scoring or streaming at all.
 Verified semantically neutral: after the optimisation the Phase 2 test reports
 byte-identical column totals.
 
+**Those two figures are historical and do not reproduce.** They were taken
+against the pre-fix code, which no longer exists, so the 5.9× cannot be
+re-derived. Re-running the current pipeline on the same 114,370-row sample gives
+**46.4 s without PCA and 153.3 s with it**, so the 22 s between 24.6 and 46.4 is
+unaccounted for: the original benchmark's stage list, estimator and machine state
+were not recorded. The direction of the result is not in doubt, the precise ratio
+is. Today's numbers are the ones on the slide.
+
+**Run-to-run variance is larger than it looks.** The same PCA fit measured
+134.9 s when profiled stage by stage and 153.3 s when timed as one call, a spread
+of about 13% on identical code, sample and core count. Any single wall-clock
+figure in this section should be read with that band around it.
+
+**What the 153.3 s is made of.** Subtracting the two fits gives **106.9 s** for
+`RowMatrixPCA` alone, and profiling the stages independently put it at 108.4 s.
+Two methods agreeing to about 1% is the strongest claim in this section: the
+dominant cost of fitting this pipeline is not the feature engineering the
+optimisation targeted, it is the eigensolver, grinding against the flat spectrum
+of §A2.1.
+
 **A withdrawn figure, and why.** Earlier drafts of this section carried a
 transform column beside the one above: 19.7 s falling to 0.32 s, a 62× speedup.
 That measurement is not sound and the claim is retracted. It timed
