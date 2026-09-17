@@ -92,8 +92,17 @@ rises, because implied speed is mostly a proxy for leg length: short flights hav
 low implied speed (taxi and climb dominate the block time) and short flights run
 late. It is not measuring schedule tightness.
 
-Both are honest negatives and fit the deck's own framing better than the claims
-do. They should be stated as measured, not asserted as motivation.
+**Correction, added after checking the fitted importances.** Only one of these is
+a negative. `SCHEDULE_SPEED_MPH` is ranked **5th of 77** by the GBT classifier and
+**7th** by the GBT regressor, carrying 1.3% and 2.6% of total importance. Its
+linear correlation is -0.008, but correlation measures a straight line and short
+versus long legs is a threshold. Judging it on the coefficient was wrong.
+
+`ROUTE_DETOUR` is the real negative: ranks 36 to 47 across all four fitted models,
+0.005% to 0.02% of importance, consistent with being constant to three decimals.
+It is kept and reported rather than removed, because re-running the tournament to
+reclaim one slot in 77 carrying 0.02% is not worth it, and a measured negative is
+worth more in the report than a silent deletion.
 
 ---
 
