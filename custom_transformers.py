@@ -240,12 +240,12 @@ class MaterializeCache(Estimator, DefaultParamsReadable, DefaultParamsWritable):
 
     Caching during ``transform`` is the opposite trade: every stage after this
     point is a plain projection consumed in a single pass, so persisting only
-    adds a materialisation the query never needed. The same measurement put a
-    cached transform at 6.5s against 0.28s uncached, a 23x penalty paid on
-    every scoring call, including each cross-validation fold's evaluation.
-    (Both transform figures were timed with ``.count()``, which lets Catalyst
-    prune the projections; treat the ratio as indicative and the absolute
-    numbers as unverified. See REPORT B2.5.)
+    adds a materialisation the query never needed. Re-measured with an aggregation on
+    the prediction, which Catalyst cannot prune away, caching at transform
+    time costs 7.08s against 6.27s on 114,370 rows: a 1.13x penalty, paid on
+    every scoring call including each cross-validation fold's evaluation.
+    An earlier figure of 0.28s against 6.5s, a 23x penalty, was timed with
+    ``.count()`` and described a plan that never ran. See REPORT B2.5.
 
     On where to put it: an earlier version of this note claimed the expensive
     work behind this point was the Arrow UDF and the target-encoding joins.

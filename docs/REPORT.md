@@ -945,10 +945,14 @@ independent of any particular DataFrame and can be memoised across transforms. A
 broadcast-join fallback is retained above 20,000 categories.
 
 **2. Caching at fit time only.** A cache stage after the feature engineering cut
-fitting from 51 s to 35 s, but *raised* transform cost from 0.28 s to 6.5 s, a 23×
-penalty on every scoring call, including each fold's evaluation, because every
-stage after that point is a single-pass projection that never needed
-materialising. Splitting it into an `Estimator` whose `_fit` persists and a `Model`
+fitting from 51 s to 35 s, but *raises* transform cost, because every stage after
+that point is a single-pass projection that never needed materialising. Measured
+on the same sample with an aggregation on the prediction, scoring costs 7.08 s
+with the cache against 6.27 s without: a **1.13×** penalty on every scoring call,
+including each fold's evaluation. An earlier draft claimed 0.28 s against 6.5 s, a
+23× penalty; that pair was timed with `.count()` and described a pruned plan. The
+trade still favours the split, but by 13% on scoring rather than by a factor of
+twenty, and the honest version is the weaker one. Splitting it into an `Estimator` whose `_fit` persists and a `Model`
 whose `_transform` is a no-op captures both sides: `persist` marks the logical
 plan so subsequently-fitted stages hit the cache, while the saved model carries no
 caching behaviour into scoring or streaming at all.

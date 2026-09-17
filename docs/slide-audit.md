@@ -203,14 +203,21 @@ number from a session log.
 
 ## Triage
 
-**Before submission**
+**Before submission — all three done, 2026-09-17**
 
-1. Slide 32, 38, 42: move to September figures, and resolve the inverted GBT
-   versus random forest timing rather than leaving the stale number that happens
-   to support the argument.
-2. Slide 11: restate `ROUTE_DETOUR` and `SCHEDULE_SPEED_MPH` as measured
-   negatives.
-3. Slide 17: qualify or replace the `0.28 s → 6.5 s` pair.
+1. ~~Slide 32, 38, 42: move to September figures.~~ Done. Slide 38's bars were
+   redrawn as well, since they are scaled at 833.3 px per unit from a zero at
+   x = 690 and the labels alone would have contradicted the picture. Slide 32's
+   timing line is gone: the dependency now rests on the algorithm rather than on
+   a wall clock that reverses between runs.
+2. ~~Slide 11: restate the two features as measured negatives.~~ Done.
+3. ~~Slide 17: qualify or replace the `0.28 s → 6.5 s` pair.~~ Replaced, and it
+   was worse than "unverifiable". Re-measured with an aggregation that cannot be
+   pruned, and with the cache forced on at transform time, scoring costs **7.08 s
+   against 6.27 s on 114,370 rows: 1.13×, not 23×**. The direction holds and the
+   magnitude was out by a factor of twenty, which also weakens the case for the
+   no-op Model: it avoids 13% on scoring, not a 23-fold penalty. Slide 17 also
+   claimed the expensive work sits upstream of the cache; it does not.
 
 **Worth doing**
 
