@@ -54,7 +54,7 @@ CLF_LABEL = "label_severe"
 # Feature groups
 # ---------------------------------------------------------------------------
 # Only the volatile operational columns get Tukey-clipped. DISTANCE is
-# deliberately left alone: its IQR fence lands at ~2,091 mi, which would fold
+# deliberately left alone: its IQR fence lands at ~2,106 mi, which would fold
 # every transcontinental flight into a single value and destroy a genuine
 # signal. Its skew is handled by the log transform instead.
 CLIP_COLS = ["DEPARTURE_DELAY", "TAXI_OUT"]
@@ -576,11 +576,19 @@ def main() -> None:
                                          if hasattr(s, "explainedVariance")][0]
                             ev = list(map(float, pca_stage.explainedVariance.toArray()))
                             mlflow.log_metric("pca_variance_retained", float(sum(ev)))
-                            with open(os.path.join(BENCH_DIR, "pca_explained_variance.json"),
-                                      "w") as fh:
+                            # One file per arm. Every PCA arm used to write the
+                            # same filename, so the seven of them overwrote each
+                            # other and the survivor was whichever finished last
+                            # - a classification arm, while the registered model
+                            # is a regression one. They differ for a real reason:
+                            # TargetEncoder is fitted on the label, so the matrix
+                            # reaching PCA is not the same for the two tasks.
+                            # register_winner writes the canonical file.
+                            ev_path = os.path.join(
+                                BENCH_DIR, f"pca_explained_variance__{run_name}.json")
+                            with open(ev_path, "w") as fh:
                                 json.dump(ev, fh)
-                            mlflow.log_artifact(
-                                os.path.join(BENCH_DIR, "pca_explained_variance.json"))
+                            mlflow.log_artifact(ev_path)
 
                         est_stage = final.stages[-1]
                         if hasattr(est_stage, "featureImportances"):
@@ -739,6 +747,24 @@ def register_winner(results: dict, args) -> None:
         raise
     shutil.rmtree(previous, ignore_errors=True)
     print(f"saved {best_dir}")
+
+    # The canonical explained-variance artifact is written here, from the model
+    # that was actually registered, so it can never describe a different arm.
+    try:
+        from pyspark.ml import PipelineModel
+        staged = PipelineModel.load(best_dir.replace("\\", "/"))
+        pca = [st for st in staged.stages if hasattr(st, "explainedVariance")]
+        if pca:
+            ev = list(map(float, pca[0].explainedVariance.toArray()))
+            with open(os.path.join(BENCH_DIR, "pca_explained_variance.json"), "w") as fh:
+                json.dump(ev, fh)
+            print(f"wrote pca_explained_variance.json from the registered model "
+                  f"({100 * sum(ev):.3f}% retained)")
+        else:
+            print("registered model has no PCA stage; canonical variance file left alone")
+    except Exception as exc:  # noqa: BLE001 - reporting only, never fail the run
+        print(f"could not refresh pca_explained_variance.json: "
+              f"{type(exc).__name__}: {exc}")
 
 
 if __name__ == "__main__":

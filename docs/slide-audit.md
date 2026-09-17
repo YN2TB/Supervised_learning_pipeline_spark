@@ -118,12 +118,17 @@ quoted; its `fit` column is sound, because a fit cannot be pruned.
 
 | slide | claim | measured | note |
 |---|---|---|---|
-| 05 The Data | `flights.csv` is **592 MB** | **565 MB** | off by 5% |
 | 10 Outlier Clipping | DISTANCE fence would be **2,091 mi** | **2,106 mi** | Q3 + 1.5·IQR on the curated feed |
 | 14 Imputer | median **322.35** | **322.3404** | rounds to 322.34 |
 
-None changes an argument. All three are the kind of thing a marker checking one
+Neither changes an argument, but both are the kind of thing a marker checking one
 number at random would find.
+
+**A third entry was withdrawn from this section.** It flagged slide 05's "592 MB"
+against a measured 565 MB. The file is 592,406,591 bytes, which is 592.4 MB in SI
+units and 565 MiB: the slide is right and this audit compared against the wrong
+unit. Recorded rather than deleted, because an audit that quietly drops its own
+mistakes is not worth much.
 
 ---
 
@@ -219,10 +224,18 @@ number from a session log.
    no-op Model: it avoids 13% on scoring, not a 23-fold penalty. Slide 17 also
    claimed the expensive work sits upstream of the cache; it does not.
 
-**Worth doing**
+**Worth doing — both done, 2026-09-17**
 
-4. Regenerate `pca_explained_variance.json` from the regression arm, or label it.
-5. Fix 592 MB, 2,091 mi, 322.35.
+4. ~~Regenerate `pca_explained_variance.json` from the regression arm.~~ Done, and
+   the cause was worse than staleness: `mllib_pipeline.py` wrote that one filename
+   from **every** PCA arm, so the seven of them overwrote each other and the file
+   held whichever finished last. Fixed at the source. The tournament now writes
+   one file per arm, and `register_winner` writes the canonical one from the model
+   it just registered, so it can never describe a different arm again. The
+   committed file and its figure are regenerated: 28.875% to **28.457%**.
+5. ~~Fix 592 MB, 2,091 mi, 322.35.~~ Two of the three fixed (2,106 mi, 322.34),
+   in the slides, the speaker note and the `CLIP_COLS` comment. The third was this
+   audit's own error, recorded in section 4.
 
 **Optional**
 
