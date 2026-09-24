@@ -294,6 +294,72 @@ Those are different objects and they get different answers:
 > anyway. The six-argument Scala overload is `private[mllib]`, which compiles to
 > public bytecode, so it is reachable through py4j.
 
+**How ARPACK finds eigenvectors from products alone.** Under `dist-eigs` the
+covariance $M = A^\top A$ never exists. The only operation available is
+$v \mapsto Mv$, and each product is a full pass over the rows, so the question is
+how few products are needed.
+
+The naive answer is power iteration, $v \leftarrow Mv / \lVert Mv\rVert$. It
+converges to the top eigenvector at the rate $\lambda_2/\lambda_1$ and discards every
+intermediate vector. On the tournament covariance ($\lambda_1/\lambda_2 = 1.133$) it
+needs 53 products to pin $\lambda_1$ to a relative $10^{-6}$, and it yields one
+eigenvector.
+
+Lanczos keeps the intermediate vectors. From a unit vector $v_1$, each step spends
+one product and turns it into one new orthonormal direction:
+
+$$w = Mv_j,\qquad \alpha_j = v_j^\top w,\qquad w \leftarrow w - \alpha_j v_j - \beta_j v_{j-1},\qquad \beta_{j+1} = \lVert w\rVert,\qquad v_{j+1} = w/\beta_{j+1}$$
+
+which is the recurrence $\beta_{j+1}v_{j+1} = Mv_j - \alpha_j v_j - \beta_j v_{j-1}$
+on the Lanczos slide. Only $Mv_j$ touches the data; everything else is arithmetic on
+$n$-vectors on the Driver. $\alpha_j$ measures how far $M$ stretches along $v_j$, the
+subtraction removes what the basis already spans, and $\beta_{j+1}$ is the length of
+what is new. Two terms are enough because $M$ is symmetric: for $i < j-1$,
+$v_i^\top M v_j = (Mv_i)^\top v_j = 0$, since $Mv_i$ lies in
+$\operatorname{span}\{v_{i-1}, v_i, v_{i+1}\}$. In floating point that orthogonality
+decays, so ARPACK re-orthogonalises.
+
+After $j$ steps the $\alpha$s and $\beta$s form a $j \times j$ tridiagonal matrix
+$T_j = V_j^\top M V_j$, the covariance seen from inside the basis. Its eigenvalues,
+the Ritz values, converge to the extreme eigenvalues of $M$, and $V_j$ times its
+eigenvectors approximates $M$'s. The Driver solves $T_j$ locally at negligible cost.
+Measured on the tournament covariance from a random start
+(`docs/benchmarks/lanczos_convergence.json`, produced by
+`scripts/lanczos_convergence.py`):
+
+| eigenvalue | products to reach a relative $10^{-6}$ |
+|---|---|
+| $\lambda_1$, by power iteration | 53 |
+| $\lambda_1$, by Lanczos | 9 |
+| $\lambda_2$ | 10 |
+| $\lambda_5$ | 21 |
+| $\lambda_{10}$ | 40 |
+
+The first $\alpha$ is 0.975, close to the mean eigenvalue
+$\operatorname{tr}(M)/n = 1.000$, which is what a random start should give; the
+sequence then climbs as the basis picks up the stretched directions. $\lambda_{10}$ is
+slowest because its neighbour is close: $\lambda_{10}/\lambda_{11} = 1.0083$.
+
+ARPACK (Lehoucq, Sorensen and Yang) is the Fortran library that makes this robust;
+Spark calls its `dsaupd` and `dseupd`. It works by *reverse communication*: ARPACK
+never sees the matrix, it hands back a vector with a request for its product, which is
+why `symmetricEigs` takes a function rather than a matrix. It also bounds memory. The
+basis is capped at $\mathrm{ncv}$ vectors, and when it fills, ARPACK uses the
+$\mathrm{ncv} - k$ unwanted Ritz values as *shifts*: a polynomial filter that damps
+the unwanted directions, applied as QR steps on the small $T$ with no further passes
+over the data. It then compresses back to $k$ vectors and extends again. Separating
+$\lambda_{10}$ from $\lambda_{11}$ is the filter's hardest job, and a wider basis gives
+it a higher-degree polynomial to do it with. Spark fixes
+$\mathrm{ncv} = \min(2k, n) = 20$.
+
+The cost follows directly. SciPy's `eigsh` is an independent implementation of the
+same ARPACK routine; run on the tournament covariance with Spark's settings
+($k = 10$, $\mathrm{ncv} = 20$, tolerance $10^{-10}$), it converges from each of ten
+random starts after **90 to 105 products**, and Spark's own ARPACK, driven directly
+with the same parameters, takes 95 to 99. Each product would be a pass over the data.
+`local-eigs` makes one pass in total. That, not any single expensive step, is where
+the wall-clock ratio below comes from.
+
 **Centring, and why the numbers did not move.** `computeSVD` decomposes whatever
 matrix it is handed, and PCA is the decomposition of the *covariance* - the centred
 second moment. Handed uncentred rows it returns second-moment directions whose
@@ -339,8 +405,8 @@ verbatim in `docs/benchmarks/tournament_failures.json`.
 
 The cause is a property of the data, not of the implementation. ARPACK's implicit
 restart works by shifting along gaps in the spectrum, and this spectrum has none
-worth the name: the ten retained components carry 5.50%, 4.88%, 4.00%, 2.81%,
-2.34%, 2.17%, 1.99%, 1.89%, 1.69% and 1.60% of total variance, so by the cut each
+worth the name: the ten retained components carry 5.48%, 4.84%, 3.35%, 2.82%,
+2.50%, 2.23%, 2.06%, 1.90%, 1.69% and 1.60% of total variance, so by the cut each
 component is within about 6% of the one before it and the sequence is still
 falling. Spark offers no way out, because `symmetricEigs` hard-codes
 $\mathrm{ncv} = \min(2k, n) = 20$, the one parameter the error message asks you
