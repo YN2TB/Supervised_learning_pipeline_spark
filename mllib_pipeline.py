@@ -403,13 +403,15 @@ def main() -> None:
                     help="RowMatrix.computeSVD mode for the PCA arms. dist-eigs is "
                          "the mode the brief describes - ARPACK Lanczos on distributed "
                          "A^T(Av) products, never materialising the n x n covariance - "
-                         "but it cannot converge on this covariance: the spectrum is "
-                         "flat at the cut (lambda10/lambda11 = 1.0054) and ncv is fixed "
-                         "at min(2k, n) = 20, so every PCA arm dies with ARPACK info=3, "
-                         "'No shifts could be applied'. local-eigs forms the 77x77 "
+                         "and it converges here, but it costs one pass over the rows "
+                         "per ARPACK product (90 to 105 of them on this covariance) "
+                         "where local-eigs costs one. local-eigs forms the 77x77 "
                          "Gramian on the driver (46 KB) and returns identical components "
                          "at |cos| = 1.0, so that is the default and what the registered "
-                         "model was fitted with. Pass dist-eigs to reproduce the failure.")
+                         "model was fitted with. dist-eigs failed in the tournament "
+                         "because parallel CV ran several ARPACK solves at once, which "
+                         "Spark's ARPACK cannot survive; RowMatrixPCA now serialises "
+                         "the solve (custom_transformers._ARPACK_LOCK).")
     ap.add_argument("--models", default="all")
     ap.add_argument("--register-arm", default="pca",
                     choices=["pca", "nopca", "any"],

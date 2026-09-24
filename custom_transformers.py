@@ -39,6 +39,7 @@ categories fall back to the prior instead of producing nulls.
 from __future__ import annotations
 
 import json
+import threading
 
 import numpy as np
 import pandas as pd
@@ -560,6 +561,19 @@ class _RowMatrixPCAParams(Params):
                    typeConverter=TypeConverters.toBoolean)
 
 
+# Spark's ARPACK is not reentrant. Without a native library it falls back to
+# dev.ludovic.netlib's F2jARPACK, a machine translation of the Fortran in which
+# every SAVE variable (np, nconv, kplusp, the Lanczos step j, the residual norm)
+# became a public static field: one copy per JVM. ARPACK exits between matrix-
+# vector products and resumes from that state, so two solves in flight at once
+# read each other's. CrossValidator(parallelism=4) fits pipelines from a thread
+# pool, and every dist-eigs PCA arm of the tournament died of exactly this
+# (info = 3, and Index 1540 out of bounds). scripts/arpack_concurrency.py
+# reproduces it. One process-wide lock serialises the eigen-solve and leaves the
+# rest of cross-validation parallel.
+_ARPACK_LOCK = threading.Lock()
+
+
 class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
                    DefaultParamsReadable, DefaultParamsWritable):
     """PCA fitted through ``RowMatrix.computeSVD`` instead of ``spark.ml``'s PCA.
@@ -613,6 +627,11 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
       per-column sums of squares - one distributed pass over the rows, still with
       no n x n matrix anywhere.
 
+    * **The eigen-solve holds a lock.** Spark's ARPACK keeps its state in static
+      fields, so concurrent solves in one JVM corrupt each other; see
+      ``_ARPACK_LOCK``. Under ``CrossValidator(parallelism=n)`` this makes the PCA
+      stage of each fit wait its turn while every other stage stays parallel.
+
     The fitted result is a stock ``pyspark.ml.feature.PCAModel``, so the
     projection runs in the JVM at full speed and serialises with no custom IO.
     """
@@ -623,13 +642,14 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
         super().__init__()
         # dist-eigs is the only mode that satisfies the brief's "without collecting
         # full covariance matrices to the Driver node" - local-eigs and local-svd
-        # both call computeGramianMatrix - but it cannot converge on this data.
-        # The spectrum is flat where we cut it (lambda10/lambda11 = 1.0054) and
-        # Spark fixes ncv at min(2k, n) = 20, so ARPACK runs out of shifts and
-        # every PCA arm fails with info=3. local-eigs builds the 77x77 Gramian
-        # (46 KB) and returns the same components at |cos| = 1.0, so it is the
-        # default and what the registered model was fitted with. See REPORT A2.1
-        # for why the distributed route is still the right answer at larger n.
+        # both call computeGramianMatrix. It converges on this data (run alone,
+        # every time), but it makes one pass over the rows per ARPACK product, 90
+        # to 105 of them here, where local-eigs makes one. local-eigs builds the
+        # 77x77 Gramian (46 KB) and returns the same components at |cos| = 1.0, so
+        # it is the default and what the registered model was fitted with. Its
+        # tournament failures were concurrency, not convergence; see
+        # _ARPACK_LOCK. See REPORT A2.1 for why the distributed route is still the
+        # right answer at larger n.
         self._setDefault(inputCol="features_selected", outputCol="features", k=10,
                          svdMode="local-eigs", maxIter=300, tol=1e-10, centre=True)
         self._set(**self._input_kwargs)
@@ -672,9 +692,10 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
             # Reach past the Python wrapper so the mode can be named; see the
             # class docstring for why "auto" is not good enough here.
             jm = rm._java_matrix_wrapper._java_model
-            svd = jm.computeSVD(k, False, 1e-9,
-                                int(self.getOrDefault(self.maxIter)),
-                                float(self.getOrDefault(self.tol)), mode)
+            with _ARPACK_LOCK:
+                svd = jm.computeSVD(k, False, 1e-9,
+                                    int(self.getOrDefault(self.maxIter)),
+                                    float(self.getOrDefault(self.tol)), mode)
 
             jV = svd.V()
             sing = [float(x) for x in svd.s().toArray()]

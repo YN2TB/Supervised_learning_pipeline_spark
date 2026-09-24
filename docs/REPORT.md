@@ -394,31 +394,74 @@ both call `computeGramianMatrix`, so under either of them the full
 $n \times n$ covariance is assembled on the Driver. Under `dist-eigs` no
 $n \times n$ object is ever formed, on the Driver or anywhere else.
 
-**The default is nevertheless `local-eigs`, because `dist-eigs` cannot converge
-on this covariance.** Every PCA arm fails under it. Three die with
-`IllegalStateException: ARPACK returns non-zero info = 3 No shifts could be
-applied. Try to increase NCV`, raised from
-`EigenValueDecomposition$.symmetricEigs`; the fourth dies with
-`ArrayIndexOutOfBoundsException: Index 1540`, and $1540 = 77 \times 20 =
-n \times \mathrm{ncv}$, the Lanczos basis overflowing. All four are recorded
-verbatim in `docs/benchmarks/tournament_failures.json`.
+**Why `dist-eigs` failed in the tournament, and why it was not the data.** Every
+PCA arm run under `dist-eigs` failed. Three died with `IllegalStateException:
+ARPACK returns non-zero info = 3 No shifts could be applied. Try to increase NCV`,
+raised from `EigenValueDecomposition$.symmetricEigs`; the fourth with
+`ArrayIndexOutOfBoundsException: Index 1540`. All four are recorded verbatim in
+`docs/benchmarks/tournament_failures.json`.
 
-The cause is a property of the data, not of the implementation. ARPACK's implicit
-restart works by shifting along gaps in the spectrum, and this spectrum has none
-worth the name: the ten retained components carry 5.48%, 4.84%, 3.35%, 2.82%,
-2.50%, 2.23%, 2.06%, 1.90%, 1.69% and 1.60% of total variance, so by the cut each
-component is within about 6% of the one before it and the sequence is still
-falling. Spark offers no way out, because `symmetricEigs` hard-codes
-$\mathrm{ncv} = \min(2k, n) = 20$, the one parameter the error message asks you
-to increase is not reachable through `computeSVD`. The same call succeeds at
-285,000 rows and fails at tournament scale, which is what a solver starved of
-shifts looks like rather than a fault in the caller.
+An earlier version of this report blamed the spectrum: eigenvalues close together
+at the cut, $\mathrm{ncv}$ fixed at 20, a solver starved of shifts. That
+explanation does not survive a controlled test (`scripts/arpack_concurrency.py`,
+results in `docs/benchmarks/arpack_concurrency.json`). A 77-row matrix built so
+that its Gramian is exactly the tournament covariance was handed to Spark's own
+`computeSVD`, with the tournament's $k$, tolerance and iteration cap, changing
+only how many solves run at once:
 
-So the registered model, and every PCA run in `mlflow.db`, was fitted with
-`local-eigs`; `svd_mode` is logged as a parameter on each of them. Components are
-identical to the distributed route wherever that route completes ($|\cos| = 1.0$,
-explained variance to five decimals), so nothing about the result changes, only
-which solver produced it.
+| | one solve at a time | four solves at once |
+|---|---|---|
+| `dist-eigs` | 3 of 3 correct | **1 of 12 correct**: 6 `Index … out of bounds`, 2 `info = 3`, 3 returned only 5, 6 or 9 of the 10 values with no error raised |
+| `local-eigs` | 3 of 3 correct | 8 of 12 correct: 2 `Index … out of bounds`, 1 `info = 3`, 1 returned 6 of 10 silently |
+
+On exactly this spectrum the solver converges every time it runs alone, and
+reproduces the tournament's errors when solves overlap.
+`CrossValidator(parallelism=4)` produces that overlap: within each fold it fits up
+to four grid points at once from a driver-side thread pool, and every one of them
+contains a PCA stage.
+
+The mechanism is in the ARPACK that Spark ships. With no native library present,
+`dev.ludovic.netlib` falls back to `F2jARPACK`, a machine translation of the
+Fortran in which every `SAVE` variable became a `public static` field: the shift
+count `np`, the converged count `nconv`, `kplusp`, the Lanczos step `j`, the
+residual norm and the rest of the solver's state, one copy per JVM (confirmed with
+`javap` on `arpack_combined_all-0.1.jar`). Reverse communication means ARPACK
+returns to its caller for every product and resumes from that state, and a
+`dist-eigs` product is a Spark job lasting seconds, so concurrent solves read one
+another's state. The error text is ARPACK's stock advice for the check that
+tripped, not a diagnosis: `info = 3` means only that the per-cycle shift count
+reached zero with fewer than $k$ values converged (`Dsaup2`:
+`if (np == 0 && nconv < nev0) info = 2`, renamed 3 by `Dsaupd`). $\mathrm{np}$ is
+reset to $\mathrm{ncv} - k$ at every restart and falls only for Ritz values whose
+error estimate is exactly zero. Close eigenvalues produce many restarts and, at
+worst, `info = 1` (iteration cap), never `info = 3`; here they need about 100
+products, far inside the cap. And $1540 = 77 \times 20 = n \times \mathrm{ncv}$ is
+the first slot of a twenty-first column in a twenty-column array, a write no
+spectrum can cause.
+
+Three consequences follow. The spectrum is not irrelevant, since it is what makes
+each solve long enough that overlap is certain, but it does not cause the failure.
+The probe that succeeded at 285,000 rows was a single fit, so the comparison that
+once read as "scale" was really "concurrency". And `local-eigs` is exposed too; it
+survived the tournament because its ARPACK phase lasts milliseconds after a long
+Gramian pass, so solves rarely overlap. The silent truncations matter here: a CV
+fold could in principle have been scored with fewer than ten components without
+any error, which cannot be checked after the fact. The final refit of every arm
+runs alone, and the registered model's ten components match an independent
+eigendecomposition of the training covariance at $|\cos| = 1.000000$, with 28.457%
+of variance retained in both, so no reported model was affected.
+
+`RowMatrixPCA` now serialises the eigen-solve behind a process-wide lock
+(`custom_transformers._ARPACK_LOCK`), leaving the rest of cross-validation
+parallel. Under the lock, four concurrent fits succeed 12 times out of 12 and match
+a single-threaded fit exactly.
+
+The registered model, and every PCA run in `mlflow.db`, was fitted with
+`local-eigs`; `svd_mode` is logged on each. The default stays `local-eigs`, now for
+the right reason: one pass over the data against about a hundred, which measured
+6.7–8.0x above and 16.8x at 285,000 rows (59.8 s against 1,004.6 s). Part of that
+ratio is avoidable: `RowMatrixPCA` caches its rows on the Python side only, so under
+`dist-eigs` each product re-serialises every row through a Python worker.
 
 **Why `dist-eigs` is still the right design, and why falling back is a finding
 rather than a retreat.** The
@@ -455,15 +498,16 @@ That is the property the
 distributed route buys, and the measured 6.7–8.0x is its price at this scale,
 not a claim that it is faster here, which it is not.
 
-What this dataset adds is that the property cannot always be bought. The same
-flatness that holds the retained variance to 28.46% is what denies ARPACK its
-shifts, so the two results are one finding seen twice: a covariance with no
-dominant directions is both a poor thing to compress and a hard thing to
-decompose iteratively. Where the spectrum has structure, or where $n$ is large
-enough that 703 MB on the Driver is the binding constraint, `dist-eigs` is the
-route to take. Here it is unavailable, and `local-eigs` on a 46 KB Gramian is not
-a compromise but the only mode that returns an answer at all. `--svd-mode
-dist-eigs` remains available and reproduces the failure exactly.
+What this pipeline adds is a condition on buying that property. The distributed
+solver keeps its state on the Driver between distributed products, Spark's copy of
+that state is shared by every solve in the JVM, and parallel cross-validation,
+which the brief also asks for, is exactly the setting that exposes it. Where $n$ is
+large enough that 703 MB on the Driver is the binding constraint, `dist-eigs` is
+still the route to take, with the solve serialised and its hundred-odd passes
+accepted as the price. Here, at $n = 77$, `local-eigs` on a 46 KB Gramian returns
+the same components for one pass. `--svd-mode dist-eigs` remains available; with
+the lock it no longer fails under parallel cross-validation on the tournament
+spectrum, but it has not been re-run at tournament scale.
 
 ### A2.2 From SVD to principal components
 
@@ -1102,8 +1146,11 @@ proportionally faster, and why per-row cost falls from 98 to about 25 μs as tha
 overhead amortises.
 
 **Where the fit time goes.** Profiled stage by stage on the same 114k sample,
-`RowMatrixPCA` dominates at **108 s of the 135 s** total, which is ARPACK
-iterating against the flat spectrum of §A2.1 showing up as wall clock. The
+`RowMatrixPCA` dominates at **108 s of the 135 s** total. Almost none of that is
+the eigen-solve: the profile ran `local-eigs`, where ARPACK works on the 77×77
+Gramian and finishes in well under a second. The time is the stage's own passes
+over the rows (a count, the column means, the Gramian and the trace), each of
+them through a Python RDD. The
 costly upstream fits are `Imputer` at 14.1 s and `StringIndexer` at 15.4 s, both
 of which aggregate. These per-stage figures are inflated by the upstream replay
 the profiler does not isolate, so they rank the stages rather than cost them
@@ -1160,33 +1207,39 @@ Five algorithm families across both tasks, under one identical 80/20 split
 (`seed=42`): Linear Regression (ElasticNet), GLM (Poisson/log), LinearSVC, Random
 Forest (regressor + classifier) and GBT (regressor + classifier).
 
-`CrossValidator(numFolds=5, parallelism=4)` evaluates grid points concurrently
-across executor slots rather than serially.
+`CrossValidator(numFolds=5, parallelism=4)` runs the folds one after another and,
+within each fold, fits up to four grid points concurrently from a driver-side
+thread pool, filling cores a single fit leaves idle. Any driver-side code a fit
+runs must therefore be thread-safe; §A2.1 describes the one place in this pipeline
+where it was not.
 
-**Tuning strategy.** Hyperparameters are searched on a stratified sample and the
-winning configuration is then refitted on the *full* training set. The reported
-tournament searched on **91,144 rows (2.0% of the 4,564,168-row training split)**
-and refitted every winner on all of it; the metrics in the tables below are
+**Tuning strategy.** Hyperparameters are searched on a simple random sample
+(`train.sample`, not stratified) and the winning configuration is then refitted on
+the *full* training set. The reported tournament searched on **456,311 rows (10.0%
+of the 4,564,168-row training split)** and refitted every winner on all of it; the
+metrics in the tables below are
 therefore full-data numbers, not sample numbers. Seven model families × 5 folds ×
 grid over 4.5M rows is many hours, and the *ranking* of hyperparameters stabilises
 well before the metric value does. The fraction is a CLI flag (`--tune-fraction`,
 default 10%), so a full-data search is one argument away.
 
-**Every winner landed on a grid boundary**, which is worth stating rather than
-hiding. The linear models all chose the smallest regularisation offered
-(`regParam` 0.01, `elasticNetParam` 0.0, and the GLM the largest at 1.0); the tree
-models mostly chose the largest capacity offered (`maxDepth` 10 for RF, 6 for GBT,
-`numTrees` 80, `maxBins` 64). Two arms are the exceptions and go the other way:
-`random_forest_regressor__nopca` preferred 40 trees to 80, and
-`gbt_classifier__nopca` preferred depth 4 to depth 6: on un-rotated features both
-have enough signal per split that the extra capacity only added variance.
+**Every grid has two values per parameter, so every winner is on a boundary by
+construction**, and that fact alone says nothing. The direction of each pick is
+what carries information. Every tree arm chose the deeper setting (`maxDepth` 10
+for RF, 6 for GBT), and the GBT regressors the finer `maxBins` of 64; the tree
+count split, with the RF classifiers taking 80 trees and the RF regressors 40.
+LinearSVC and linear regression chose the lighter penalty (`regParam` 0.01); the
+Poisson GLM chose the heavier one (1.0), because shrinking its coefficients is what
+keeps the exponential link from overshooting (§B4 below).
 
-The dominant direction is what 4.5M training rows predict: the variance term is
-small at this sample size, so penalising coefficients mostly adds bias, and the
-trees have not yet reached the depth where they overfit. It does mean the grids
-bracket the optimum from one side only; a wider search would likely gain the
-tree arms a little and leave the linear winner where it is, since `regParam` is
-already pinned to its floor. The cost table below shows why widening was not worth
+The linear direction should not be over-read. The brief's own ElasticNet setting,
+$\alpha = 0.5$, $\lambda = 0.1$, is one of the four grid points, and it scored a CV
+RMSE of 10.582 against 10.536 for the chosen $\lambda = 0.01$, $\alpha = 0.0$ on the
+no-PCA arm. All four points lie within 0.046 of each other, less than one
+fold-to-fold standard deviation (0.084), so they tie; the PCA arm, on the same grid,
+picked $\alpha = 0.5$. With 77 features and about 365,000 training rows per fold,
+the penalty barely matters. A wider search would likely gain the tree arms a
+little. The cost table below shows why widening was not worth
 the compute: the arms differ by far more than a grid step.
 
 ### Results
@@ -1217,8 +1270,8 @@ the compute: the arms differ by far more than a grid step.
 | linear_svc | pca | 0.9657 | 0.8769 | 0.9547 | 0.9561 | 803 |
 | random_forest_classifier | pca | 0.9635 | 0.8709 | 0.9523 | 0.9547 | 2074 |
 
-Split: 4,564,168 train / 1,139,832 test. Hyperparameters searched on 91,144 rows
-(2.0% of train), 5 folds, `parallelism=4`, then refitted on the full training set.
+Split: 4,564,168 train / 1,139,832 test. Hyperparameters searched on 456,311 rows
+(10.0% of train), 5 folds, `parallelism=4`, then refitted on the full training set.
 
 **The linear model wins the regression task outright**, and that is the headline
 result rather than an anticlimax. Arrival delay is very nearly an affine function

@@ -1,0 +1,38 @@
+{
+  "operator": "77-row matrix whose Gramian is the tournament covariance (training split, 4,564,168 rows)",
+  "arpack_implementation": "dev.ludovic.netlib.arpack.F2jARPACK",
+  "k": 10,
+  "ncv": 20,
+  "tol": 1e-10,
+  "maxIter": 300,
+  "raw_computeSVD": {
+    "dist-eigs": {
+      "one_at_a_time": {
+        "ok": 3
+      },
+      "4_at_once": {
+        "ArrayIndexOutOfBoundsException: None": 5,
+        "info = 3 (No shifts could be applied)": 2,
+        "Index out of bounds": 1,
+        "returned 6 of 10 values, no error raised": 1,
+        "returned 9 of 10 values, no error raised": 1,
+        "ok": 1,
+        "returned 5 of 10 values, no error raised": 1
+      }
+    },
+    "local-eigs": {
+      "one_at_a_time": {
+        "ok": 3
+      },
+      "4_at_once": {
+        "ok": 8,
+        "info = 3 (No shifts could be applied)": 1,
+        "Index out of bounds": 2,
+        "returned 6 of 10 values, no error raised": 1
+      }
+    }
+  },
+  "RowMatrixPCA_with_lock_local_eigs_4_at_once": {
+    "ok": 12
+  }
+}
