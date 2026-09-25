@@ -113,6 +113,20 @@ gaps as ties.
   Poisson (0.796) and LinearSVC (AUC 0.965 vs rule 0.950) before the queue was
   stopped for low memory (see below).
 
+### 2026-09-26 01:23–02:10 · Stopped runs finished (driver capped at 6 GB)
+
+- **rot1-wheelsoff_le120**, all 7 models within departure delay ≤ 120 min, 1%:
+  R² LR 0.813, GBT 0.803, GLM Poisson 0.796, RF 0.787 against the rule's 0.715
+  (RMSE 10.4 against 12.8); AUC GBT 0.973, RF 0.967, LinearSVC 0.965 against the
+  rule's 0.950. Every model beats the rule within the scope.
+- **rot1-predeparture_inbound_lean** (no prev_dep_delay, no has_prev) against
+  `inbound`: every model loses a little (R² −0.009 to −0.017, AUC −0.002 to −0.010;
+  only LinearSVC AUC-PR +0.006). Each gap is within 1% noise, but all seven point the
+  same way, so the two columns carry something. **Decided:** keep the information,
+  not the duplication. Proposed next: replace prev_dep_delay by
+  prev_air_gain = prev_arr_delay − prev_dep_delay (what the inbound made up or lost
+  in the air), nearly uncorrelated with prev_arr_delay. Not yet tested.
+
 ### 2026-09-26 00:5x · Queue stopped: system low on memory
 
 Claude Code stopped the Q2 shell while the machine was critically short of memory.
