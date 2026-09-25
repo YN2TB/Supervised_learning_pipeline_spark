@@ -160,6 +160,23 @@ One change at a time against `predeparture_inbound`:
   background shells cannot stop it. Log: `.spark-tmp/tournament_predeparture.log`.
 - **Backup before it:** `backup_pre_tournament_predep_20260926_030321/`
   (mlflow.db, models). `--no-register`: the registry keeps v4 in Production.
+- **First pass (03:03–04:29):** LR, GLM Poisson and LinearSVC finished, both arms:
+
+  | arm | R² / AUC | AUC-PR | minutes |
+  |---|---|---|---|
+  | linear_regression pca / nopca | R² 0.248 / 0.270 | | 23 / 2 |
+  | glm_poisson_log pca / nopca | R² 0.138 / 0.145 | | 14 / 2 |
+  | linear_svc pca / nopca | AUC 0.779 / 0.807 | 0.520 / 0.541 | 15 / 2 |
+  | rule on prev_arr_delay | R² 0.201, AUC 0.760 | 0.480 | |
+
+- **Crash:** `java.lang.OutOfMemoryError: Java heap space` in the random forest
+  regressor's PCA-arm cross-validation: 4 fits in parallel (`--parallelism 4`), trees
+  up to depth 10 × 80, on 51 dense principal components (the September run had 10).
+  The OOM shut the SparkContext down and every later arm "failed" within
+  milliseconds (connection refused), which says nothing about those models.
+- **Fixed:** the loop now stops when the SparkContext is gone (`d6166a5`), so a rerun
+  resumes cleanly. **Resumed at 04:31 with `--parallelism 2`** (half the concurrent
+  fits); the six finished arms are skipped.
 - **Result:** _pending_
 
 ### 2026-09-26 00:5x · Queue stopped: system low on memory
