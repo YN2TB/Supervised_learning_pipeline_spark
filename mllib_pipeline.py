@@ -40,6 +40,7 @@ from custom_transformers import (  # noqa: E402
     FrequencyEncoder, HaversineTransformer, MaterializeCache, OutlierIQRTruncator,
     RowMatrixPCA, SignedLog1pTransformer, TargetEncoder,
 )
+from flight_schema import SEVERE_DELAY_THRESHOLD  # noqa: E402
 from spark_session import TRACKING_URI, build_spark, path, results_dir  # noqa: E402
 
 CURATED = path("data", "parquet", "flights_curated")
@@ -49,6 +50,7 @@ REGISTERED_MODEL = "flight_delay_pipeline"
 SPLIT_SEED = 42
 
 REG_LABEL = "label_delay"
+SEVERE_THRESHOLD_MIN = SEVERE_DELAY_THRESHOLD
 CLF_LABEL = "label_severe"
 WEIGHT_COL = "class_weight"
 
@@ -445,6 +447,10 @@ def resolve_feature_names(fitted_model, sample_df, use_pca: bool, pca_k: int):
 # ---------------------------------------------------------------------------
 # Model tournament definitions
 # ---------------------------------------------------------------------------
+# Defined in model_specs but left out of --models all; name them explicitly.
+OPT_IN_MODELS = {"glm_gaussian_identity"}
+
+
 def model_specs(args):
     """Each entry: estimator, grid, task, label column, primary metric."""
     grid = {}
@@ -486,6 +492,17 @@ def model_specs(args):
     grid["glm_poisson_log"] = dict(
         estimator=glm, task="regression", label="label_glm",
         grid=(ParamGridBuilder().addGrid(glm.regParam, [0.1, 1.0]).build()))
+
+    # The common-sense GLM for an additive target: Gaussian family, identity
+    # link, i.e. least squares fitted by IRLS. The log link above models a
+    # multiplicative response and has no reason to fit a delay in minutes.
+    # Opt-in (not in --models all) until a trial shows it earns a place.
+    glm_id = GeneralizedLinearRegression(featuresCol="features", labelCol=REG_LABEL,
+                                         family="gaussian", link="identity",
+                                         maxIter=25, regParam=0.01)
+    grid["glm_gaussian_identity"] = dict(
+        estimator=glm_id, task="regression", label=REG_LABEL,
+        grid=(ParamGridBuilder().addGrid(glm_id.regParam, [0.01, 0.1]).build()))
 
     svc = LinearSVC(featuresCol="features", labelCol=CLF_LABEL, maxIter=30, **clf_w)
     grid["linear_svc"] = dict(
@@ -714,6 +731,41 @@ def log_baselines(train, test, n_test: int, args) -> dict:
         out[run_name] = dict(metrics, model=f"baseline_{task}", arm="none", task=task)
         print(f"  baseline {task:<14} " + "  ".join(f"{k}={v:.4f}" for k, v in metrics.items())
               + f"   ({note})")
+
+    # One-line rules on the strongest legitimate input, when the feature set has
+    # one. For the wheels-off set: arrival delay = departure delay + the average
+    # time made up (about -5 min). Whatever a model scores above its rule is
+    # what the model adds; the rule alone is what "looks like a leak".
+    numeric = FEATURE_SETS[args.feature_set]["numeric"]
+    for col in [c for c in ("DEPARTURE_DELAY", "prev_arr_delay") if c in numeric]:
+        stats = train.agg(F.avg(col).alias("mx"), F.avg(REG_LABEL).alias("my"),
+                          F.covar_samp(col, REG_LABEL).alias("cxy"),
+                          F.var_samp(col).alias("vx")).first()
+        slope = float(stats["cxy"] / stats["vx"]) if stats["vx"] else 0.0
+        icpt = float(stats["my"] - slope * stats["mx"])
+        x = F.coalesce(F.col(col).cast("double"), F.lit(float(stats["mx"])))
+        reg_pred = F.lit(icpt) + F.lit(slope) * x
+        for task, label, preds, note in (
+            ("regression", REG_LABEL, test.withColumn("prediction", reg_pred),
+             f"{icpt:+.2f} + {slope:.3f} * {col}, fitted on train"),
+            ("classification", CLF_LABEL,
+             test.withColumn("prediction", (reg_pred > SEVERE_THRESHOLD_MIN).cast("double"))
+                 .withColumn("rawPrediction", array_to_vector(F.array(-x, x))),
+             f"score = {col}; late if the regression rule says > {SEVERE_THRESHOLD_MIN} min"),
+        ):
+            run_name = f"rule_{col.lower()}_{task}__none"
+            metrics = {m: float(e.evaluate(preds)) for m, e in evaluators(task, label).items()}
+            with mlflow.start_run(run_name=run_name):
+                mlflow.log_params({"model": f"rule_{col.lower()}_{task}", "arm": "none",
+                                   "task": task, "label": label,
+                                   "feature_set": args.feature_set, "baseline": note,
+                                   "test_rows": n_test,
+                                   "sample_fraction": args.sample_fraction})
+                mlflow.log_metrics(metrics)
+            out[run_name] = dict(metrics, model=f"rule_{col.lower()}_{task}", arm="none",
+                                 task=task)
+            print(f"  rule {col:<16} {task:<14} "
+                  + "  ".join(f"{k}={v:.4f}" for k, v in metrics.items()) + f"   ({note})")
     return out
 
 
@@ -752,6 +804,13 @@ def main() -> None:
                          "Spark's ARPACK cannot survive; RowMatrixPCA now serialises "
                          "the solve (custom_transformers._ARPACK_LOCK).")
     ap.add_argument("--models", default="all")
+    ap.add_argument("--max-dep-delay", type=float, default=None,
+                    help="wheels-off feature sets only: keep flights whose departure "
+                         "delay is at most this many minutes, in train AND test. It "
+                         "defines the model's scope (above it, arrival ~ departure "
+                         "delay - 6 is a rule, not a prediction problem); legal because "
+                         "departure delay is known at wheels-off. 2%% of flights are "
+                         "over 120 min and carry 62%% of the target's sum of squares.")
     ap.add_argument("--class-weight", default="balanced", choices=["balanced", "none"],
                     help="weight the classifiers' training rows so each class carries "
                          "half the weight (default), or not at all")
@@ -849,6 +908,14 @@ def main() -> None:
         numeric = FEATURE_SETS[args.feature_set]["numeric"]
         train = add_context_features(spark, df, train, numeric)
         test = add_context_features(spark, df, test, numeric)
+        if args.max_dep_delay is not None:
+            if "DEPARTURE_DELAY" not in numeric:
+                raise SystemExit("--max-dep-delay needs a feature set that knows the "
+                                 "departure delay (wheelsoff); before departure it is unknown")
+            # Filtered after the split: each half keeps the same rows it had,
+            # minus the out-of-scope ones.
+            in_scope = F.col("DEPARTURE_DELAY") <= F.lit(float(args.max_dep_delay))
+            train, test = train.filter(in_scope), test.filter(in_scope)
 
         min_delay = train.agg(F.min(REG_LABEL)).first()[0]
         glm_offset = float(abs(min(min_delay, 0.0)) + 1.0)
@@ -894,7 +961,7 @@ def main() -> None:
         print(f"tuning on {n_tune:,} rows ({args.tune_fraction:.1%} of train)\n")
 
         specs = model_specs(args)
-        wanted = (list(specs) if args.models == "all"
+        wanted = ([m for m in specs if m not in OPT_IN_MODELS] if args.models == "all"
                   else [m.strip() for m in args.models.split(",")])
 
         already_done = completed_arms(args.experiment) if args.resume else {}
@@ -974,6 +1041,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                         "tune_rows": n_tune, "train_rows": n_train,
                         "test_rows": n_test, "grid_size": len(spec["grid"]),
                         "sample_fraction": args.sample_fraction,
+                    "max_dep_delay": args.max_dep_delay if args.max_dep_delay is not None else "",
                     })
                     if args.note:
                         mlflow.set_tag("note", args.note)
@@ -1092,7 +1160,7 @@ def _finish(results: dict, args) -> None:
 def register_winner(results: dict, args) -> None:
     """Register the best regression pipeline and promote Staging -> Production."""
     reg = {k: v for k, v in results.items() if v["task"] == "regression"
-           and not str(v.get("model", "")).startswith("baseline")}
+           and v.get("arm") != "none"}          # baselines and rules
     if not reg:
         print("no regression runs to register")
         return

@@ -194,7 +194,7 @@ def plot_model_comparison(runs: dict) -> None:
     ):
         rows = {k: v for k, v in runs.items()
                 if v.get("task") == task and metric in v
-                and not str(v.get("model", "")).startswith("baseline")}
+                and v.get("arm") != "none"}          # baselines and rules
         if not rows:
             continue
         models = sorted({v["model"] for v in rows.values()})
@@ -369,7 +369,7 @@ def plot_curves_combined(runs: dict) -> None:
     """Every classifier's ROC and PR curve on one pair of axes."""
     curves = {}
     for name, v in runs.items():
-        if v.get("task") != "classification" or str(v.get("model", "")).startswith("baseline"):
+        if v.get("task") != "classification" or v.get("arm") == "none":
             continue
         f = os.path.join(BENCH_DIR, f"{name}_curves.json")
         if os.path.exists(f):
