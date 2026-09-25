@@ -186,8 +186,31 @@ One change at a time against `predeparture_inbound`:
   when a new one arrives (a released frame still in use is recomputed, never fails).
 - **Resumed ~05:40** in two phases (`.spark-tmp/run_tournament_predeparture_trees.ps1`):
   the four tree models' no-PCA arms with `--parallelism 2`, then their PCA arms with
-  `--parallelism 1`.
-- **Result:** _pending_
+  `--parallelism 1`. (A first relaunch failed at argument parsing, the note's spaces
+  split by cmd; relaunched at 05:17 with a space-free note.)
+- **Result, test split (1,139,832 flights), 10 of 14 arms (the four tree PCA arms
+  still running at the time of writing):**
+
+  | model | arm | R² | RMSE | AUC | AUC-PR | minutes |
+  |---|---|---|---|---|---|---|
+  | GBT regressor | nopca | **0.349** | **31.83** | | | 12 |
+  | RF regressor | nopca | 0.339 | 32.07 | | | 13 |
+  | Linear regression | nopca | 0.270 | 33.70 | | | 2 |
+  | Linear regression | pca | 0.248 | 34.21 | | | 23 |
+  | GLM Poisson/log | nopca | 0.145 | 36.47 | | | 2 |
+  | GLM Poisson/log | pca | 0.138 | 36.62 | | | 14 |
+  | rule on prev_arr_delay | | 0.201 | 35.25 | | | |
+  | train-mean baseline | | 0.000 | 39.45 | | | |
+  | GBT classifier | nopca | | | **0.849** | **0.645** | 9 |
+  | RF classifier | nopca | | | 0.840 | 0.622 | 10 |
+  | LinearSVC | nopca | | | 0.807 | 0.541 | 3 |
+  | LinearSVC | pca | | | 0.779 | 0.520 | 15 |
+  | rule on prev_arr_delay | | | | 0.760 | 0.480 | |
+  | all-negative baseline | | | | 0.500 | 0.111 | |
+
+  In line with the 1% and 5% trials (GBT 0.31 → 0.35 R² with more data). Every model
+  beats the one-line rule except the log-link GLM; the no-PCA arm wins every pair so
+  far; PCA at 90% EVR kept k = 53.
 
 ### 2026-09-26 00:5x · Queue stopped: system low on memory
 
