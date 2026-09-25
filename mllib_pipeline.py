@@ -690,6 +690,18 @@ def checkpoint(results: dict, failures: dict, out_dir: str = BENCH_DIR) -> None:
 PAUSE_FILE = path(".pause_tournament")
 
 
+class SparkDied(BaseException):
+    """The JVM behind the session is gone (typically an OutOfMemoryError)."""
+
+
+def spark_alive(frame) -> bool:
+    try:
+        frame.sparkSession.range(1).count()
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 class Paused(BaseException):
     """Raised at a safe point when PAUSE_FILE exists. BaseException, so the
     per-arm ``except Exception`` does not record it as a failure."""
@@ -1010,17 +1022,22 @@ def main() -> None:
         try:
             run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                      already_done, results, failures)
-        except (Paused, KeyboardInterrupt) as stop:
+        except (Paused, KeyboardInterrupt, SparkDied) as stop:
             if mlflow.active_run():
                 mlflow.end_run(status="KILLED")
             checkpoint(results, failures, args.out_dir)
-            how = f"paused {stop}" if isinstance(stop, Paused) else "interrupted (Ctrl+C)"
+            how = (f"paused {stop}" if isinstance(stop, Paused)
+                   else f"stopped: {stop}" if isinstance(stop, SparkDied)
+                   else "interrupted (Ctrl+C)")
             print(f"\n{how}. {len(results)} result(s) kept in {args.out_dir}.")
             print(f"To continue: delete {PAUSE_FILE} if present, then rerun the same command.")
             return
         _finish(results, args)
     finally:
-        spark.stop()
+        try:
+            spark.stop()
+        except Exception:  # noqa: BLE001 - a dead JVM cannot be stopped twice
+            pass
 
 
 def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
@@ -1170,6 +1187,12 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                 if mlflow.active_run():
                     mlflow.end_run(status="FAILED")
                 checkpoint(results, failures, args.out_dir)
+                if not spark_alive(train):
+                    # An OutOfMemoryError in the JVM shuts the SparkContext down.
+                    # Every later arm would then "fail" in milliseconds for no
+                    # reason of its own; stop instead, so a rerun of the same
+                    # command resumes cleanly from the arms that finished.
+                    raise SparkDied(f"SparkContext is gone after {run_name}")
                 continue
 
             # Release what MaterializeCache persisted for this arm's fits.
