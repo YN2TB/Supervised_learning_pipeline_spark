@@ -177,6 +177,16 @@ One change at a time against `predeparture_inbound`:
 - **Fixed:** the loop now stops when the SparkContext is gone (`d6166a5`), so a rerun
   resumes cleanly. **Resumed at 04:31 with `--parallelism 2`** (half the concurrent
   fits); the six finished arms are skipped.
+- **Second OOM (~05:25), same arm.** The JVM held 11 GB and the machine had 1.1 GB
+  free; stopped by hand (a JVM after an OutOfMemoryError is not trustworthy).
+  PCA picked k = 53. Real cause: `MaterializeCache` persisted one frame per pipeline
+  fit and nothing released them until the arm ended, so 20 copies (4 grid points × 5
+  folds) piled up; with 10 components in September they fitted, with 53 they do not.
+  **Fixed** (`d071d7b`): at most 4 frames stay persisted; older ones are released
+  when a new one arrives (a released frame still in use is recomputed, never fails).
+- **Resumed ~05:40** in two phases (`.spark-tmp/run_tournament_predeparture_trees.ps1`):
+  the four tree models' no-PCA arms with `--parallelism 2`, then their PCA arms with
+  `--parallelism 1`.
 - **Result:** _pending_
 
 ### 2026-09-26 00:5x · Queue stopped: system low on memory
