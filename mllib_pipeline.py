@@ -174,7 +174,11 @@ FLIGHT_KEY = ["AIRLINE", "FLIGHT_NUMBER", "MONTH", "DAY", "ORIGIN_AIRPORT", "SCH
 ROT_SCHEDULE = ["leg_of_day", "has_prev", "turn_slack"]
 ROT_INBOUND_DEP = ["prev_dep_delay"]
 ROT_INBOUND_ARR = ["prev_arr_delay", "inbound_overrun"]
-ROTATION_COLS = ROT_SCHEDULE + ROT_INBOUND_DEP + ROT_INBOUND_ARR
+# prev_arr_delay - prev_dep_delay: what the inbound leg made up (negative) or lost
+# in the air. Carries what prev_dep_delay adds over prev_arr_delay without being
+# a near-copy of it (r 0.93 between those two).
+ROT_AIR_GAIN = ["prev_air_gain"]
+ROTATION_COLS = ROT_SCHEDULE + ROT_INBOUND_DEP + ROT_INBOUND_ARR + ROT_AIR_GAIN
 
 
 def rotation_table(df):
@@ -198,6 +202,7 @@ def rotation_table(df):
             .withColumn("prev_dep_delay",
                         F.when(F.col("_linked"), F.lag("DEPARTURE_DELAY").over(w).cast("double")))
             .withColumn("prev_arr_delay", F.when(F.col("_linked"), prev_arr))
+            .withColumn("prev_air_gain", F.col("prev_arr_delay") - F.col("prev_dep_delay"))
             # Only the part past the ground time propagates; slack left over does not.
             .withColumn("inbound_overrun",
                         F.greatest(F.col("prev_arr_delay") - F.col("turn_slack"), F.lit(0.0)))
@@ -279,7 +284,21 @@ FEATURE_SETS = {
     "predeparture_sched": dict(numeric=PREDEP_NUMERIC + ROT_SCHEDULE, encoder="frequency"),
     "predeparture_inbound_dep": dict(numeric=PREDEP_NUMERIC + ROT_SCHEDULE + ROT_INBOUND_DEP,
                                      encoder="frequency"),
-    "predeparture_inbound": dict(numeric=PREDEP_NUMERIC + ROTATION_COLS, encoder="frequency"),
+    "predeparture_inbound": dict(
+        numeric=PREDEP_NUMERIC + ROT_SCHEDULE + ROT_INBOUND_DEP + ROT_INBOUND_ARR,
+        encoder="frequency"),
+    # One change against predeparture_inbound: prev_dep_delay -> prev_air_gain.
+    "predeparture_inbound_gain": dict(
+        numeric=PREDEP_NUMERIC + ROT_SCHEDULE + ["prev_arr_delay", "prev_air_gain",
+                                                 "inbound_overrun"],
+        encoder="frequency"),
+    # The tournament candidate: inbound_gain without the frequency encoder, which
+    # tied its absence (the coordinates already identify the airport). has_prev
+    # stays: it tells the model that prev_* on a first leg is an imputed median.
+    "predeparture_final": dict(
+        numeric=[c for c in PREDEP_NUMERIC if c not in FREQ_ENC_OUT]
+        + ROT_SCHEDULE + ["prev_arr_delay", "prev_air_gain", "inbound_overrun"],
+        encoder="frequency"),
     # The same without the near-duplicates: prev_dep_delay (r 0.93 with
     # prev_arr_delay, which supersedes it once the inbound has landed) and
     # has_prev (r 0.62 with leg_of_day, nearly "not the first leg").
@@ -290,7 +309,8 @@ FEATURE_SETS = {
     "predeparture_congestion": dict(numeric=PREDEP_NUMERIC + CONGESTION_COLS,
                                     encoder="frequency"),
     "predeparture_inbound_congestion": dict(
-        numeric=PREDEP_NUMERIC + ROTATION_COLS + CONGESTION_COLS, encoder="frequency"),
+        numeric=PREDEP_NUMERIC + ROT_SCHEDULE + ROT_INBOUND_DEP + ROT_INBOUND_ARR + CONGESTION_COLS,
+        encoder="frequency"),
     "predeparture_sched_congestion": dict(
         numeric=PREDEP_NUMERIC + ROT_SCHEDULE + CONGESTION_COLS, encoder="frequency"),
 }
