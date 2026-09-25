@@ -151,10 +151,15 @@ def main() -> None:
         if "single" in tests:
             res["single"] = {}
             for col in ["DEPARTURE_DELAY"] + (["prev_arr_delay"] if "prev_arr_delay" in numeric else []):
-                pipe = Pipeline(stages=[VectorAssembler(inputCols=[col], outputCol="features",
-                                                        handleInvalid="skip"),
+                # Missing values take the train mean, like the rule baselines in
+                # mllib_pipeline: skipping them would score a different set of
+                # test rows (for prev_arr_delay, the 25% first legs of the day).
+                fill = float(train.agg(F.avg(col)).first()[0])
+                pipe = Pipeline(stages=[VectorAssembler(inputCols=["_x"], outputCol="features"),
                                         estimator("lr")])
-                res["single"][col] = metrics(pipe.fit(train).transform(test))
+                with_x = lambda d: d.withColumn("_x", F.coalesce(F.col(col).cast("double"),  # noqa: E731
+                                                                 F.lit(fill)))
+                res["single"][col] = metrics(pipe.fit(with_x(train)).transform(with_x(test)))
             print(f"AUDIT single column, straight line: {res['single']}", flush=True)
 
         if "shuffled" in tests:
