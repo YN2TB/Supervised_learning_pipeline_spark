@@ -47,12 +47,17 @@ def main() -> None:
     with open(meta_path) as fh:
         cols = [f["name"] for f in json.load(fh)["fields"]]
 
-    spark = build_spark("make-stream-events", cores="4")
+    # cores="*" and make_split, exactly as the tournament: randomSplit draws per
+    # read partition, so a different core count gives a different split and the
+    # "held-out" rows would partly be training rows (CLAUDE.md section 4).
+    spark = build_spark("make-stream-events")
     try:
-        from mllib_pipeline import CURATED, SPLIT_SEED
+        from mllib_pipeline import CURATED, add_context_features, make_split
         df = spark.read.parquet(CURATED)
-        # Same seed and ratio as training, so this really is the held-out side.
-        _, test = df.randomSplit([0.8, 0.2], seed=SPLIT_SEED)
+        _, test = make_split(df)
+        # The aircraft's previous leg and the scheduled congestion, if the model
+        # reads them; a real feed would carry them, here they are looked up.
+        test = add_context_features(spark, df, test, cols)
 
         need = args.batches * args.rows
         frac = min(1.0, (need * 40.0) / max(test.count(), 1))

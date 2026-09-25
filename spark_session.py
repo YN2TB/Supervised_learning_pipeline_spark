@@ -59,6 +59,21 @@ def build_spark(app_name: str, cores: str = "*", driver_memory: str = "10g",
     return spark
 
 
+# Where each MLflow experiment writes its results and plots. The two official
+# tournaments are deliverables and live under docs/benchmarks; every trial run
+# (dev checks, ablations, probes) goes to experiments/<name>/, next to the
+# annotated log in experiments/LOG.md, so trials never mix with the results.
+OFFICIAL_EXPERIMENTS = {
+    "flight-delay-mllib": ("docs", "benchmarks"),                       # wheels-off
+    "flight-delay-predeparture": ("docs", "benchmarks", "flight-delay-predeparture"),
+}
+
+
+def results_dir(experiment: str) -> str:
+    parts = OFFICIAL_EXPERIMENTS.get(experiment, ("experiments", experiment))
+    return os.path.join(REPO, *parts)
+
+
 def path(*parts: str) -> str:
     """Absolute path inside the repo, regardless of cwd."""
     return os.path.join(REPO, *parts)

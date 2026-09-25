@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 import numpy as np  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from spark_session import TRACKING_URI, path  # noqa: E402
+from spark_session import TRACKING_URI, path, results_dir  # noqa: E402
 
 BENCH_DIR = path("docs", "benchmarks")
 DEFAULT_EXPERIMENT = "flight-delay-predeparture"
@@ -35,11 +35,8 @@ REFERENCE_EXPERIMENT = "flight-delay-mllib"     # the wheels-off tournaments
 
 
 def bench_dir_for(experiment: str) -> str:
-    """Same rule as mllib_pipeline --out-dir: the old experiment keeps the top
-    level, every other experiment gets its own folder."""
-    if experiment == REFERENCE_EXPERIMENT:
-        return path("docs", "benchmarks")
-    return path("docs", "benchmarks", experiment)
+    """Same rule as mllib_pipeline --out-dir (spark_session.results_dir)."""
+    return results_dir(experiment)
 
 # --- palette (validated: adjacent CVD dE 9.2, normal-vision dE 27.6, light) ---
 SURFACE = "#fcfcfb"

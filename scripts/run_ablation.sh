@@ -15,14 +15,18 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SETS="${SETS:-predeparture_all predeparture predeparture_nofreq wheelsoff}"
+SETS="${SETS:-predeparture_all predeparture predeparture_nofreq predeparture_sched predeparture_inbound_dep predeparture_inbound wheelsoff}"
 MODELS="${MODELS:-linear_regression,gbt_regressor,linear_svc,gbt_classifier}"
+SAMPLE="${SAMPLE:-0.05}"
+FOLDS="${FOLDS:-3}"
+PREFIX="${PREFIX:-ablation}"
+NOTE="${NOTE:-feature-set ablation}"
 
 for fs in $SETS; do
   echo "=== ablation: $fs ==="
   python -u mllib_pipeline.py \
-    --feature-set "$fs" --experiment "ablation-$fs" \
-    --sample-fraction 0.05 --tune-fraction 0.5 --folds 3 \
-    --models "$MODELS" --arms nopca --no-register \
-    2>&1 | tee ".spark-tmp/ablation_$fs.log" | grep -a --line-buffered -E "^(===|  (pca|nopca|baseline)|train=|Traceback)"
+    --feature-set "$fs" --experiment "$PREFIX-$fs" \
+    --sample-fraction "$SAMPLE" --tune-fraction 0.5 --folds "$FOLDS" \
+    --models "$MODELS" --arms nopca --no-register --note "$NOTE: $fs" \
+    2>&1 | tee ".spark-tmp/${PREFIX}_$fs.log" | grep -a --line-buffered -E "^(===|  (pca|nopca|baseline)|train=|Traceback)"
 done

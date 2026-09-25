@@ -40,7 +40,7 @@ from custom_transformers import (  # noqa: E402
     FrequencyEncoder, HaversineTransformer, MaterializeCache, OutlierIQRTruncator,
     RowMatrixPCA, SignedLog1pTransformer, TargetEncoder,
 )
-from spark_session import TRACKING_URI, build_spark, path  # noqa: E402
+from spark_session import TRACKING_URI, build_spark, path, results_dir  # noqa: E402
 
 CURATED = path("data", "parquet", "flights_curated")
 MODEL_DIR = path("models")
@@ -148,6 +148,116 @@ PREDEP_NUMERIC = [
     "freq_origin", "freq_dest",
 ]
 
+# ---------------------------------------------------------------------------
+# Aircraft rotation: what the plane did before this flight
+# ---------------------------------------------------------------------------
+# The same aircraft (TAIL_NUMBER) flies several legs a day, and a late inbound
+# aircraft makes the next departure late. These features look at the previous
+# leg of the same aircraft on the same day, grouped by WHEN they become known:
+#
+#   schedule   leg_of_day, has_prev, turn_slack (scheduled minutes on the ground
+#              between the inbound arrival and this departure, both local times
+#              at the same airport). Known when the schedule is published.
+#   inbound departed    + prev_dep_delay. Known once the inbound leg has left.
+#   inbound arrived     + prev_arr_delay, inbound_overrun (= max(0,
+#              prev_arr_delay - turn_slack): minutes the inbound lands past the
+#              moment this flight should leave).
+#              Known at the gate, once the inbound has landed or has an ETA.
+#
+# They are another flight's observables, never this flight's own outcome. A
+# previous leg counts only if it landed where this one departs; otherwise the
+# chain is broken (a cancelled or diverted leg was removed) and the features
+# are left empty for the Imputer, with has_prev = 0.
+FLIGHT_KEY = ["AIRLINE", "FLIGHT_NUMBER", "MONTH", "DAY", "ORIGIN_AIRPORT", "SCHED_DEP_MIN"]
+ROT_SCHEDULE = ["leg_of_day", "has_prev", "turn_slack"]
+ROT_INBOUND_DEP = ["prev_dep_delay"]
+ROT_INBOUND_ARR = ["prev_arr_delay", "inbound_overrun"]
+ROTATION_COLS = ROT_SCHEDULE + ROT_INBOUND_DEP + ROT_INBOUND_ARR
+
+
+def rotation_table(df):
+    """One row per flight (FLIGHT_KEY is unique) with the rotation columns.
+
+    Computed over every curated flight, so a sampled or split frame still sees
+    its true previous leg. Joined on after the split, so the split is unchanged.
+    """
+    from pyspark.sql import Window
+    w = (Window.partitionBy("TAIL_NUMBER", "MONTH", "DAY")
+         .orderBy("SCHED_DEP_MIN", "FLIGHT_NUMBER"))       # tie-break: 595 dup minutes
+    linked = F.lag("DESTINATION_AIRPORT").over(w) == F.col("ORIGIN_AIRPORT")
+    slack = (F.col("SCHED_DEP_MIN") - F.lag("SCHED_ARR_MIN").over(w)).cast("double")
+    prev_arr = F.lag(REG_LABEL).over(w).cast("double")
+    return (df.select(*FLIGHT_KEY, "TAIL_NUMBER", "DESTINATION_AIRPORT", "SCHED_ARR_MIN",
+                      "DEPARTURE_DELAY", REG_LABEL)
+            .withColumn("leg_of_day", F.row_number().over(w).cast("double"))
+            .withColumn("_linked", F.coalesce(linked, F.lit(False)))
+            .withColumn("has_prev", F.col("_linked").cast("double"))
+            .withColumn("turn_slack", F.when(F.col("_linked"), slack))
+            .withColumn("prev_dep_delay",
+                        F.when(F.col("_linked"), F.lag("DEPARTURE_DELAY").over(w).cast("double")))
+            .withColumn("prev_arr_delay", F.when(F.col("_linked"), prev_arr))
+            # Only the part past the ground time propagates; slack left over does not.
+            .withColumn("inbound_overrun",
+                        F.greatest(F.col("prev_arr_delay") - F.col("turn_slack"), F.lit(0.0)))
+            .select(*FLIGHT_KEY, *ROTATION_COLS))
+
+
+# ---------------------------------------------------------------------------
+# Scheduled congestion: how busy the airports are meant to be
+# ---------------------------------------------------------------------------
+# Counted from the PUBLISHED schedule, i.e. flights_raw with cancelled and
+# diverted flights included. Counting the curated table instead would leak:
+# a stormy day cancels flights, so a low count there means bad weather, which
+# the schedule could not have known.
+#
+#   sched_origin_hour   log1p(departures scheduled at the origin that hour)
+#   sched_dest_hour     log1p(arrivals scheduled at the destination that hour)
+#   origin_day_ratio    departures scheduled at the origin that day over its
+#                       average day: >1 on peak days such as holidays
+CONGESTION_COLS = ["sched_origin_hour", "sched_dest_hour", "origin_day_ratio"]
+RAW = path("data", "parquet", "flights_raw")
+
+
+def congestion_tables(spark):
+    """Three small lookup tables keyed on airport and date (and hour)."""
+    from data_prep import _repair_airport_codes, hhmm_to_minutes
+    raw = _repair_airport_codes(spark, spark.read.parquet(RAW))
+    sched = (raw.withColumn("_dh", (hhmm_to_minutes("SCHEDULED_DEPARTURE") / 60).cast("int"))
+                .withColumn("_ah", (hhmm_to_minutes("SCHEDULED_ARRIVAL") / 60).cast("int")))
+    origin_hour = (sched.groupBy("ORIGIN_AIRPORT", "MONTH", "DAY", F.col("_dh").alias("DEP_HOUR"))
+                   .agg(F.log1p(F.count(F.lit(1))).alias("sched_origin_hour")))
+    dest_hour = (sched.groupBy("DESTINATION_AIRPORT", "MONTH", "DAY", F.col("_ah").alias("_arr_hour"))
+                 .agg(F.log1p(F.count(F.lit(1))).alias("sched_dest_hour")))
+    per_day = sched.groupBy("ORIGIN_AIRPORT", "MONTH", "DAY").agg(F.count(F.lit(1)).alias("_n"))
+    from pyspark.sql import Window
+    origin_day = (per_day.withColumn("origin_day_ratio",
+                                     F.col("_n") / F.avg("_n").over(Window.partitionBy("ORIGIN_AIRPORT")))
+                  .drop("_n"))
+    return origin_hour, dest_hour, origin_day
+
+
+def add_context_features(spark, full_df, frame, numeric):
+    """Join the row-external features a feature set needs onto ``frame``.
+
+    Both kinds look at OTHER flights (the aircraft's previous leg, the airport's
+    schedule), so they cannot be pipeline stages: a stage sees one row, and a
+    streaming micro-batch does not hold the rest of the day. They are lookups,
+    computed once from the full data and joined by key. A left join keeps every
+    row of ``frame``, so a train/test split made before this call is unchanged.
+    """
+    need = set(numeric)
+    if need & set(ROTATION_COLS):
+        frame = frame.join(rotation_table(full_df), FLIGHT_KEY, "left")
+    if need & set(CONGESTION_COLS):
+        origin_hour, dest_hour, origin_day = congestion_tables(spark)
+        frame = (frame.withColumn("_arr_hour", (F.col("SCHED_ARR_MIN") / 60).cast("int"))
+                 .join(origin_hour, ["ORIGIN_AIRPORT", "MONTH", "DAY", "DEP_HOUR"], "left")
+                 .join(dest_hour, ["DESTINATION_AIRPORT", "MONTH", "DAY", "_arr_hour"], "left")
+                 .join(origin_day, ["ORIGIN_AIRPORT", "MONTH", "DAY"], "left")
+                 .drop("_arr_hour"))
+    return frame
+
+
 FEATURE_SETS = {
     # The September tournament's features, kept to reproduce it as a reference.
     "wheelsoff": dict(numeric=WHEELSOFF_NUMERIC, encoder="target"),
@@ -156,6 +266,18 @@ FEATURE_SETS = {
     # Ablation: does the frequency encoder earn its stage?
     "predeparture_nofreq": dict(numeric=[c for c in PREDEP_NUMERIC
                                          if c not in FREQ_ENC_OUT], encoder="frequency"),
+    # Aircraft rotation, by horizon (see ROTATION_COLS above).
+    "predeparture_sched": dict(numeric=PREDEP_NUMERIC + ROT_SCHEDULE, encoder="frequency"),
+    "predeparture_inbound_dep": dict(numeric=PREDEP_NUMERIC + ROT_SCHEDULE + ROT_INBOUND_DEP,
+                                     encoder="frequency"),
+    "predeparture_inbound": dict(numeric=PREDEP_NUMERIC + ROTATION_COLS, encoder="frequency"),
+    # Scheduled congestion, alone and on top of the full rotation set.
+    "predeparture_congestion": dict(numeric=PREDEP_NUMERIC + CONGESTION_COLS,
+                                    encoder="frequency"),
+    "predeparture_inbound_congestion": dict(
+        numeric=PREDEP_NUMERIC + ROTATION_COLS + CONGESTION_COLS, encoder="frequency"),
+    "predeparture_sched_congestion": dict(
+        numeric=PREDEP_NUMERIC + ROT_SCHEDULE + CONGESTION_COLS, encoder="frequency"),
 }
 DEFAULT_FEATURE_SET = "predeparture"
 
@@ -645,12 +767,19 @@ def main() -> None:
     ap.add_argument("--experiment", default="flight-delay-predeparture",
                     help="flight-delay-mllib holds the two wheels-off tournaments")
     ap.add_argument("--out-dir", default=None,
-                    help="where results and plots go; default docs/benchmarks for "
-                         "flight-delay-mllib, docs/benchmarks/<experiment> otherwise, "
-                         "so a new experiment never overwrites the old artifacts")
+                    help="where results and plots go; default spark_session.results_dir: "
+                         "docs/benchmarks/... for the two official tournaments, "
+                         "experiments/<experiment>/ for every trial")
+    ap.add_argument("--note", default="",
+                    help="what this run is testing; stored as the MLflow experiment "
+                         "description and on each run. Also write it into experiments/LOG.md")
     ap.add_argument("--no-register", action="store_true",
                     help="skip register_winner: nothing in the Model Registry or in "
                          "models/ changes. Use for every run you do not mean to ship.")
+    ap.add_argument("--register-only", action="store_true",
+                    help="train nothing: register the best finished arm of --experiment "
+                         "(after a --no-register tournament), archiving the current "
+                         "Production version. Back up mlflow.db and models/ first.")
     ap.add_argument("--resume", dest="resume", action="store_true", default=True,
                     help="skip arms already completed in the tracking store (default)")
     ap.add_argument("--no-resume", dest="resume", action="store_false",
@@ -663,10 +792,21 @@ def main() -> None:
     else:
         args.pca_k = 10          # unused while pca_variance > 0
     if args.out_dir is None:
-        args.out_dir = (BENCH_DIR if args.experiment == "flight-delay-mllib"
-                        else path("docs", "benchmarks", args.experiment))
+        args.out_dir = results_dir(args.experiment)
 
     os.makedirs(args.out_dir, exist_ok=True)
+    if args.register_only:
+        mlflow.set_tracking_uri(TRACKING_URI)
+        results = completed_arms(args.experiment)
+        if not results:
+            print(f"no finished arms in {args.experiment!r}; nothing to register")
+            return
+        spark = build_spark("mllib-register")      # load_model needs a session
+        try:
+            register_winner(results, args)
+        finally:
+            spark.stop()
+        return
     if pause_requested():
         print(f"{PAUSE_FILE} exists, so the run would pause at once. Delete it to run.")
         return
@@ -678,7 +818,11 @@ def main() -> None:
     # and the file store races when CrossValidator's parallel folds make
     # autologging create nested runs from several threads at once.
     mlflow.set_tracking_uri(TRACKING_URI)
-    mlflow.set_experiment(args.experiment)
+    exp = mlflow.set_experiment(args.experiment)
+    if args.note:
+        # Shown as the experiment's description in the MLflow UI, and kept on
+        # every run as a tag, so a trial explains itself wherever it is opened.
+        MlflowClient().set_experiment_tag(exp.experiment_id, "mlflow.note.content", args.note)
     # The brief asks for automatic hyperparameter capture via mlflow.pyspark.ml.
     # Models are logged explicitly below so we control which artifact is
     # registered, hence log_models=False here.
@@ -700,6 +844,11 @@ def main() -> None:
         # matters: the 14 completed arms are only comparable while the split
         # is byte-identical, and scripts/check_split.py asserts it.
         train, test = make_split(df, args.sample_fraction)
+        # Rotation and congestion lookups, joined after the split so the rows in
+        # each half do not move. A no-op for feature sets that use neither.
+        numeric = FEATURE_SETS[args.feature_set]["numeric"]
+        train = add_context_features(spark, df, train, numeric)
+        test = add_context_features(spark, df, test, numeric)
 
         min_delay = train.agg(F.min(REG_LABEL)).first()[0]
         glm_offset = float(abs(min(min_delay, 0.0)) + 1.0)
@@ -826,6 +975,8 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                         "test_rows": n_test, "grid_size": len(spec["grid"]),
                         "sample_fraction": args.sample_fraction,
                     })
+                    if args.note:
+                        mlflow.set_tag("note", args.note)
 
                     saved = load_cv_checkpoint(args, run_name)
                     cv_model = None
