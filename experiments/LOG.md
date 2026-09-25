@@ -66,6 +66,61 @@ gaps as ties.
   model is judged by what it adds over the rule.
 - **Queued:** wheels-off at 1% within ≤ 120 min; leakage audit within ≤ 120 min.
 
+## 2026-09-25 · leakage-audit: is either model leaking? (`scripts/leakage_audit.py`, 5% sample)
+
+| test | wheels-off | predeparture_inbound |
+|---|---|---|
+| flights in both train and test | 0 | 0 |
+| full pipeline, random split (LR / GBT R²) | 0.927 / 0.854 | 0.275 / 0.353 |
+| straight line on one column | DEPARTURE_DELAY 0.890 | (rerun needed, see below) |
+| labels shuffled within train (LR / GBT R²) | −0.022 / −0.051 | 0.001 / −0.013 |
+| temporal split, Jan–Sep → Oct–Dec (LR / GBT R²) | 0.931 / 0.806 | 0.240 / 0.322 |
+| physics reference (full split) | RMSE 8.78, R² 0.950 | n/a |
+
+- **Wheels-off: no leak.** Shuffled labels give R² ≈ 0 (no path from a label into
+  the features); the temporal split scores the same as the random one (the score
+  does not come from neighbouring rows); and the physics reference, which knows
+  taxi-out and guesses air time + taxi-in by their train mean per route, month and
+  hour, beats the model (RMSE 8.78 against 10.57). A leaking model would beat it.
+  The identity ARRIVAL_DELAY − DEPARTURE_DELAY = ELAPSED_TIME − SCHEDULED_TIME held
+  on 100% of 1.14M test flights. The problem is easy, not leaky.
+- **Pre-departure with rotation: no leak; a small random-split advantage.** Shuffled
+  labels ≈ 0. The temporal split costs ~0.03 R² (GBT 0.353 → 0.322): flights of the
+  same day sit on both sides of a random split. Report the temporal figure as the
+  expectation for future months.
+- **Bug found in the audit itself:** the single-column test dropped rows with a
+  missing value, so for prev_arr_delay (null on the 25% first legs) it scored a
+  different test set (0.320, not comparable). Fixed in `7db6e93` to fill with the
+  train mean, as the rule baselines do; rerun pending.
+
+### Wheels-off within departure delay ≤ 120 min (audit_wheelsoff_le120, 5%)
+
+| test | all flights | ≤ 120 min (98% of flights) |
+|---|---|---|
+| straight line on DEPARTURE_DELAY, R² | 0.890 | 0.717 |
+| model LR / GBT, R² | 0.927 / 0.854 | 0.813 / 0.818 |
+| model LR / GBT, RMSE (min) | 10.57 / 14.96 | 10.41 / 10.27 |
+| shuffled labels, R² | −0.02 / −0.05 | −0.02 / −0.02 |
+| temporal split, R² | 0.931 / 0.806 | 0.800 / 0.800 |
+| physics reference, RMSE / R² | 8.78 / 0.950 | 8.70 / 0.870 |
+
+- Cutting the tail barely moves the per-flight error (RMSE ~10.4 either way) but
+  drops R² by ~0.11: the tail inflated R² through its variance, not through better
+  predictions. RMSE is the honest number to quote; R² needs the scope stated.
+- Within the scope the model adds **+0.10 R² over the one-line rule** (vs +0.04 on all
+  flights), still no leak signs (shuffled ≈ 0, temporal holds, physics reference ahead).
+- The 1% scoped tournament (rot1-wheelsoff_le120) finished only LR (0.813), GLM
+  Poisson (0.796) and LinearSVC (AUC 0.965 vs rule 0.950) before the queue was
+  stopped for low memory (see below).
+
+### 2026-09-26 00:5x · Queue stopped: system low on memory
+
+Claude Code stopped the Q2 shell while the machine was critically short of memory.
+Its child (the rot1-wheelsoff_le120 run, a 5.7 GB JVM) kept running orphaned and was
+then stopped by hand, as was the Q3 waiter (`inbound_lean`, never started).
+Free memory went from 3.6 GB to 9.8 GB. Not rerun; pending the user's go-ahead:
+the rest of rot1-wheelsoff_le120 (RF, GBT arms) and `inbound_lean`.
+
 ## 2026-09-25 · What the public Kaggle notebooks on this dataset report, and why it does not compare
 
 Read (not run) from kaggle.com/datasets/usdot/flight-delays/code, sorted by votes.
@@ -100,5 +155,48 @@ Read (not run) from kaggle.com/datasets/usdot/flight-delays/code, sorted by vote
 - **Signals before training (full train split, Pearson r with arrival delay / severe):**
   prev_arr_delay 0.56 / 0.48, prev_dep_delay 0.53 / 0.45, inbound_overrun (unclipped)
   0.26 / 0.22, leg_of_day 0.08 / 0.09; congestion columns ≤ 0.04.
-- **Result:** _pending_
-- **Decided:** _pending_
+- **Timing caveat:** the rotation sets ran ~3x slower than `predeparture` (32 to 41 min
+  against 11 at 1%). Cause: the join left 64 partitions (shuffle default) where the
+  read had 16, so every job ran 4x the tasks. Fixed afterwards (`8d36dce`, coalesce
+  to defaultParallelism); rot1 timings for those sets are inflated, the metrics are
+  not affected. `predeparture_all` and `wheelsoff` are slow for another reason: the
+  Haversine Arrow UDF (~5x).
+- **Result (best of the 7 models per metric, test split of the 1% sample):**
+
+  | set | R² | AUC | AUC-PR |
+  |---|---|---|---|
+  | predeparture | 0.018 | 0.656 | 0.187 |
+  | predeparture_all | 0.027 | 0.666 | 0.194 |
+  | predeparture_nofreq | 0.022 | 0.654 | 0.183 |
+  | predeparture_sched (+ schedule-only rotation) | 0.055 | 0.685 | 0.269 |
+  | predeparture_inbound_dep (+ inbound departure delay) | 0.265 | 0.817 | 0.571 |
+  | predeparture_inbound (+ inbound arrival delay, overrun) | **0.313** | **0.835** | **0.623** |
+  | rule: straight line on prev_arr_delay | 0.209 | 0.756 | 0.477 |
+  | wheelsoff (reference) | 0.930 | 0.979 | 0.923 |
+  | rule: straight line on DEPARTURE_DELAY | 0.894 | 0.959 | 0.897 |
+
+  Linear regression wins the wheels-off set (0.930 against 0.74 to 0.79 for the
+  trees): the relationship is y ≈ x − 6, which depth-limited trees can only step.
+- **Decided:**
+  - The aircraft-rotation features go into the tournament: +0.29 R² and +0.18 AUC
+    over `predeparture`, far beyond 1% noise. Horizon: the inbound aircraft has
+    landed (or has an ETA). `inbound_dep` is the fallback if an earlier horizon is
+    wanted (loses ~0.02 AUC).
+  - The model adds +0.10 R² / +0.08 AUC over its one-line rule; the wheels-off
+    model adds +0.04 R² over its rule. That is the answer to "it looks like a leak".
+  - The pruned set ties `predeparture_all` (within ±0.01): the dropped columns carried
+    nothing. The frequency encoder does not clearly help (`nofreq` ties); to be
+    confirmed at 5% before dropping it.
+  - Pending: `inbound_lean` (Q3) against `inbound`.
+
+## 2026-09-26 · Scheduled congestion (rot1-*congestion) and GLM link (glm1-*), 1%
+
+- **Congestion adds nothing:** every set ties its congestion twin within ±0.01
+  (GBT AUC: predeparture 0.656 vs 0.657; sched RF R² 0.055 vs 0.062; inbound GBT
+  AUC 0.835 vs 0.836). Matches the EDA (|r| ≤ 0.04, and r 0.90 with the airport
+  frequency). **Decided: dropped.**
+- **GLM:** on `predeparture_inbound`, Gaussian/identity R² 0.267 against
+  Poisson/log 0.191 (−0.08); on `predeparture` both ~0.02. Gaussian/identity equals
+  LinearRegression (0.2670 vs 0.2666): it is least squares fitted by IRLS. The log
+  link models a multiplicative response; delay adds up. Decision for the
+  tournament: open (keep Poisson as the brief asks and report this, or swap).
