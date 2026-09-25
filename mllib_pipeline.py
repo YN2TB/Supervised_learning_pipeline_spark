@@ -248,6 +248,7 @@ def add_context_features(spark, full_df, frame, numeric):
     row of ``frame``, so a train/test split made before this call is unchanged.
     """
     need = set(numeric)
+    joined = bool(need & (set(ROTATION_COLS) | set(CONGESTION_COLS)))
     if need & set(ROTATION_COLS):
         frame = frame.join(rotation_table(full_df), FLIGHT_KEY, "left")
     if need & set(CONGESTION_COLS):
@@ -257,6 +258,12 @@ def add_context_features(spark, full_df, frame, numeric):
                  .join(dest_hour, ["DESTINATION_AIRPORT", "MONTH", "DAY", "_arr_hour"], "left")
                  .join(origin_day, ["ORIGIN_AIRPORT", "MONTH", "DAY"], "left")
                  .drop("_arr_hour"))
+    if joined:
+        # A join leaves spark.sql.shuffle.partitions (64) partitions where the
+        # read had one per core (16). Every later job then runs 4x the tasks,
+        # each tiny: the rotation ablation sets took 3x as long as the others
+        # at 1%. coalesce only merges partitions; no row moves between halves.
+        frame = frame.coalesce(spark.sparkContext.defaultParallelism)
     return frame
 
 
