@@ -205,6 +205,14 @@ class SignedLog1pTransformer(Transformer, HasInputCols, HasOutputCols,
 # because the persisting stage is buried inside a Pipeline the caller does not
 # hold a reference to; release_caches() is called between tournament arms.
 _PERSISTED: list = []
+# At most this many MaterializeCache frames stay persisted at once. A tournament
+# arm fits the pipeline 20 times (4 grid points x 5 folds) and nothing released
+# them until the arm ended, so 20 copies piled up. Harmless with 10 PCA
+# components; with 53 dense ones it ran the 10 GB heap out of memory (random
+# forest arm, 2026-09-26). Unpersisting a frame another concurrent fit still
+# reads costs a recomputation, never a failure.
+_MAX_LIVE_CACHES = 4
+_PERSIST_LOCK = threading.Lock()
 
 
 def release_caches() -> int:
@@ -272,14 +280,19 @@ class MaterializeCache(Estimator, DefaultParamsReadable, DefaultParamsWritable):
     def _fit(self, dataset: DataFrame) -> MaterializeCacheModel:
         if not dataset.isStreaming:
             from pyspark import StorageLevel
-            dataset.persist(StorageLevel.MEMORY_AND_DISK)
             # Registered so the caller can release it. Nothing here knows when
             # the fit that wanted the cache is finished, and a tournament fits
-            # this stage once per fold per grid point - without a release those
-            # blocks accumulate for the whole run. MEMORY_AND_DISK means Spark
-            # evicts rather than failing, so the symptom is memory pressure and
-            # GC time, not a crash.
-            _PERSISTED.append(dataset)
+            # this stage once per fold per grid point, so the oldest are
+            # released once more than _MAX_LIVE_CACHES are held.
+            with _PERSIST_LOCK:
+                while len(_PERSISTED) >= _MAX_LIVE_CACHES:
+                    old = _PERSISTED.pop(0)
+                    try:
+                        old.unpersist()
+                    except Exception:  # noqa: BLE001
+                        pass
+                dataset.persist(StorageLevel.MEMORY_AND_DISK)
+                _PERSISTED.append(dataset)
         return MaterializeCacheModel()
 
 
