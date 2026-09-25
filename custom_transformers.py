@@ -11,6 +11,8 @@ Pipeline stages
     ``SignedLog1pTransformer``    skew compression that tolerates negatives
     ``OutlierIQRTruncator``       Estimator -> ``OutlierIQRTruncatorModel``
     ``TargetEncoder``             Estimator -> ``TargetEncoderModel``
+                                  (wheels-off reference only)
+    ``FrequencyEncoder``          Estimator -> ``FrequencyEncoderModel``
     ``RowMatrixPCA``              Estimator -> stock ``PCAModel``, fitted
                                   through ``RowMatrix.computeSVD``
 
@@ -543,6 +545,55 @@ class TargetEncoder(Estimator, HasInputCols, HasOutputCols, _TargetEncoderParams
 
 
 # ---------------------------------------------------------------------------
+# FrequencyEncoder
+# ---------------------------------------------------------------------------
+class FrequencyEncoderModel(TargetEncoderModel):
+    """Applies frozen category frequencies learned on the training split.
+
+    Same lookup machinery as :class:`TargetEncoderModel` (a cached
+    ``create_map``, a broadcast-join fallback, JSON persistence); only what the
+    map holds differs. ``labelCol`` is unused and left empty.
+    """
+
+
+class FrequencyEncoder(Estimator, HasInputCols, HasOutputCols,
+                       DefaultParamsReadable, DefaultParamsWritable):
+    r"""How busy a category is, learned from the training split, never the label.
+
+    For category :math:`c` with :math:`n_c` of the :math:`N` training rows the
+    encoding is :math:`\log(1 + 10^6 \, n_c / N)`: the log of its share of
+    flights, per million. The share rather than the raw count, so the value does
+    not change with the size of the data it was fitted on (a cross-validation
+    fold on a 10% sample and the final refit on all of train give the same
+    scale). The log because airport traffic is extremely skewed: Atlanta has
+    thousands of times the flights of the smallest airports. A category unseen in
+    training encodes to 0, the value a category with no flights would get.
+
+    It replaces target encoding. Target encoding put the label's category means
+    into the features, which is legal when fitted on train only but reads as
+    leakage and adds machinery the problem does not need; congestion at an
+    airport is a plain, target-free fact.
+    """
+
+    @keyword_only
+    def __init__(self, inputCols=None, outputCols=None):
+        super().__init__()
+        self._set(**self._input_kwargs)
+
+    def _fit(self, dataset: DataFrame) -> FrequencyEncoderModel:
+        total = float(dataset.count())
+        mapping: dict[str, dict[str, float]] = {}
+        for src in self.getInputCols():
+            counts = (dataset.groupBy(F.col(src).cast("string").alias("k"))
+                      .count().collect())
+            mapping[src] = {r["k"]: float(np.log1p(1e6 * r["count"] / total))
+                            for r in counts if r["k"] is not None}
+        return FrequencyEncoderModel(
+            inputCols=self.getInputCols(), outputCols=self.getOutputCols(),
+            labelCol="", mappingJson=json.dumps(mapping), prior=0.0, smoothing=0.0)
+
+
+# ---------------------------------------------------------------------------
 # RowMatrixPCA
 # ---------------------------------------------------------------------------
 class _RowMatrixPCAParams(Params):
@@ -559,6 +610,10 @@ class _RowMatrixPCAParams(Params):
     centre = Param(Params._dummy(), "centre",
                    "subtract the column means before the SVD, as PCA requires",
                    typeConverter=TypeConverters.toBoolean)
+    varianceThreshold = Param(Params._dummy(), "varianceThreshold",
+                              "if > 0, ignore k and keep the fewest components whose "
+                              "explained variance reaches this fraction",
+                              typeConverter=TypeConverters.toFloat)
 
 
 # Spark's ARPACK is not reentrant. Without a native library it falls back to
@@ -632,13 +687,20 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
       ``_ARPACK_LOCK``. Under ``CrossValidator(parallelism=n)`` this makes the PCA
       stage of each fit wait its turn while every other stage stays parallel.
 
+    * **k can be chosen by the data.** With ``varianceThreshold`` > 0 the fit
+      takes the whole spectrum (``local-svd``, the only mode that returns all n
+      components) and keeps the fewest components whose explained variance
+      reaches the threshold. A fixed k = 10 kept 28.5% of the variance on the
+      wheels-off features, which says the number was not chosen from the data.
+
     The fitted result is a stock ``pyspark.ml.feature.PCAModel``, so the
     projection runs in the JVM at full speed and serialises with no custom IO.
     """
 
     @keyword_only
     def __init__(self, inputCol="features_selected", outputCol="features", k=10,
-                 svdMode="local-eigs", maxIter=300, tol=1e-10, centre=True):
+                 svdMode="local-eigs", maxIter=300, tol=1e-10, centre=True,
+                 varianceThreshold=0.0):
         super().__init__()
         # dist-eigs is the only mode that satisfies the brief's "without collecting
         # full covariance matrices to the Driver node" - local-eigs and local-svd
@@ -651,7 +713,8 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
         # _ARPACK_LOCK. See REPORT A2.1 for why the distributed route is still the
         # right answer at larger n.
         self._setDefault(inputCol="features_selected", outputCol="features", k=10,
-                         svdMode="local-eigs", maxIter=300, tol=1e-10, centre=True)
+                         svdMode="local-eigs", maxIter=300, tol=1e-10, centre=True,
+                         varianceThreshold=0.0)
         self._set(**self._input_kwargs)
 
     def _fit(self, dataset: DataFrame):
@@ -665,7 +728,15 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
         k = int(self.getOrDefault(self.k))
         mode = self.getOrDefault(self.svdMode)
         centre = bool(self.getOrDefault(self.centre))
+        threshold = float(self.getOrDefault(self.varianceThreshold))
         sc = dataset.sparkSession.sparkContext
+        if threshold > 0:
+            # Choosing k by explained variance needs the whole spectrum, and the
+            # eigs modes can only return k < n components. local-svd decomposes
+            # the n x n Gramian on the driver and returns all of it; at n of a
+            # few dozen that is a few kilobytes. k is then cut to the threshold.
+            k = int(dataset.select(in_col).first()[0].size)
+            mode = "local-svd"
 
         rows = dataset.select(in_col).rdd.map(lambda r: MLLibVectors.fromML(r[0]))
         rows.cache()
@@ -699,9 +770,9 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
 
             jV = svd.V()
             sing = [float(x) for x in svd.s().toArray()]
-            pc = DenseMatrix(int(jV.numRows()), int(jV.numCols()),
-                             [float(x) for x in jV.toArray()],
-                             bool(jV.isTransposed()))
+            # Matrix.toArray is column-major whatever isTransposed says.
+            n_rows_v, n_cols_v = int(jV.numRows()), int(jV.numCols())
+            V = np.array([float(x) for x in jV.toArray()]).reshape(n_cols_v, n_rows_v).T
 
             # The explained-variance denominator is the TOTAL variance, which
             # computeSVD does not return. It is trace(A^T A) on the same rows the
@@ -713,7 +784,19 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
             if centre:
                 work.unpersist()
 
-        ev = DenseVector([(x * x / trace) if trace > 0 else 0.0 for x in sing])
+        ratios = [(x * x / trace) if trace > 0 else 0.0 for x in sing]
+        if threshold > 0:
+            # Fewest components whose cumulative share reaches the threshold. If
+            # the spectrum never gets there (rank-deficient input: computeSVD
+            # drops singular values below rCond), keep everything it returned.
+            cum = np.cumsum(ratios)
+            hit = np.nonzero(cum >= threshold - 1e-12)[0]
+            k = int(hit[0]) + 1 if hit.size else len(ratios)
+        else:
+            k = min(k, len(ratios))
+        ev = DenseVector(ratios[:k])
+        V = V[:, :k]
+        pc = DenseMatrix(V.shape[0], k, V.flatten(order="F").tolist(), False)
         print(f"  (RowMatrixPCA: mode={mode} k={k} centred={centre} "
               f"retained={float(sum(ev.toArray())):.4f})")
 

@@ -1,6 +1,7 @@
 """Phase 5: pull the tournament results out of MLflow and render the figures.
 
-    source ./env.sh && python benchmark_results.py
+    source ./env.sh && python benchmark_results.py                      # pre-departure
+    source ./env.sh && python benchmark_results.py --experiment flight-delay-mllib
 
 Reads the tracking store rather than retraining, so every number in the report
 traces back to a logged run. Writes docs/benchmarks/*.png and a markdown table
@@ -29,6 +30,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from spark_session import TRACKING_URI, path  # noqa: E402
 
 BENCH_DIR = path("docs", "benchmarks")
+DEFAULT_EXPERIMENT = "flight-delay-predeparture"
+REFERENCE_EXPERIMENT = "flight-delay-mllib"     # the wheels-off tournaments
+
+
+def bench_dir_for(experiment: str) -> str:
+    """Same rule as mllib_pipeline --out-dir: the old experiment keeps the top
+    level, every other experiment gets its own folder."""
+    if experiment == REFERENCE_EXPERIMENT:
+        return path("docs", "benchmarks")
+    return path("docs", "benchmarks", experiment)
 
 # --- palette (validated: adjacent CVD dE 9.2, normal-vision dE 27.6, light) ---
 SURFACE = "#fcfcfb"
@@ -116,8 +127,14 @@ def load_runs(experiment: str) -> dict:
 def plot_explained_variance() -> None:
     src = os.path.join(BENCH_DIR, "pca_explained_variance.json")
     if not os.path.exists(src):
-        print("  (no PCA variance file; skipping)")
-        return
+        # No registered model in this experiment yet: use a regression arm's own
+        # file (every PCA arm writes one).
+        cands = sorted(f for f in os.listdir(BENCH_DIR)
+                       if f.startswith("pca_explained_variance__") and "regressor" in f)
+        if not cands:
+            print("  (no PCA variance file; skipping)")
+            return
+        src = os.path.join(BENCH_DIR, cands[0])
     with open(src) as fh:
         ev = np.asarray(json.load(fh), dtype=float)
     cum = np.cumsum(ev) * 100
@@ -134,7 +151,7 @@ def plot_explained_variance() -> None:
                 textcoords="offset points", ha="right",
                 color=INK, fontsize=10, fontweight="bold")
     ax.set_ylim(0, 105)
-    ax.set_xticks(ks)
+    ax.set_xticks(ks if len(ks) <= 20 else ks[::max(1, len(ks) // 12)])
     style_axes(ax, "principal component k", "variance explained (%)",
                "Cumulative variance retained by distributed PCA")
     ax.text(0.0, -0.18, "bars: individual component   line: cumulative",
@@ -152,7 +169,7 @@ def plot_importances() -> None:
         with open(os.path.join(BENCH_DIR, fname)) as fh:
             payload = json.load(fh)
         names = payload["features"]
-        vals = np.asarray(payload["importances"], dtype=float)
+        vals = np.abs(np.asarray(payload["importances"], dtype=float))
         n = min(15, len(vals))
         idx = np.argsort(vals)[::-1][:n][::-1]
 
@@ -166,7 +183,7 @@ def plot_importances() -> None:
                     color=INK_2, fontsize=8)
         ax.set_xlim(0, span * 1.16)
         model = fname[len("importance_"):-len("__nopca.json")]
-        style_axes(ax, "Gini importance", "",
+        style_axes(ax, payload.get("kind", "Gini importance"), "",
                    f"Feature importance - {model.replace('_', ' ')} (no PCA)")
         save(fig, f"feature_importance_{model}.png")
 
@@ -179,7 +196,8 @@ def plot_model_comparison(runs: dict) -> None:
          "model_comparison_classification.png"),
     ):
         rows = {k: v for k, v in runs.items()
-                if v.get("task") == task and metric in v}
+                if v.get("task") == task and metric in v
+                and not str(v.get("model", "")).startswith("baseline")}
         if not rows:
             continue
         models = sorted({v["model"] for v in rows.values()})
@@ -196,7 +214,7 @@ def plot_model_comparison(runs: dict) -> None:
         for i, arm in enumerate(arms):
             off = (i - 0.5) * (h + 0.04)   # 2px-equivalent gap between bars
             ax.barh(y + off, vals[arm], height=h, color=SERIES[i],
-                    label="with PCA(k=10)" if arm == "pca" else "no PCA")
+                    label="with PCA" if arm == "pca" else "no PCA")
         finite = [v for a in arms for v in vals[a] if np.isfinite(v)]
         span = max(finite) if finite else 1.0
         for i, arm in enumerate(arms):
@@ -321,21 +339,137 @@ def write_table(runs: dict) -> None:
     print(f"  wrote {out}")
 
 
+def plot_importance_grid() -> None:
+    """Top ten features of every no-PCA model, side by side, one scale each."""
+    files = sorted(f for f in os.listdir(BENCH_DIR)
+                   if f.startswith("importance_") and f.endswith("__nopca.json"))
+    if not files:
+        return
+    cols = 3 if len(files) > 4 else 2
+    rows_ = int(np.ceil(len(files) / cols))
+    fig, axes = plt.subplots(rows_, cols, figsize=(5.2 * cols, 3.7 * rows_), squeeze=False)
+    for ax in axes.flat[len(files):]:
+        ax.axis("off")
+    for ax, fname in zip(axes.flat, files):
+        with open(os.path.join(BENCH_DIR, fname)) as fh:
+            payload = json.load(fh)
+        vals = np.abs(np.asarray(payload["importances"], dtype=float))
+        share = vals / (vals.sum() or 1.0)
+        idx = np.argsort(share)[::-1][:10][::-1]
+        ax.barh(range(len(idx)), share[idx], color=SEQ, height=0.62)
+        ax.set_yticks(range(len(idx)))
+        ax.set_yticklabels([payload["features"][i] for i in idx], fontsize=8)
+        model = fname[len("importance_"):-len("__nopca.json")].replace("_", " ")
+        style_axes(ax, "share of total |importance|", "", model)
+        ax.title.set_fontsize(10)
+    fig.suptitle("What each model uses (no-PCA arms)", x=0.01, ha="left",
+                 color=INK, fontsize=13)
+    fig.tight_layout()
+    save(fig, "feature_importance_grid.png")
+
+
+def plot_curves_combined(runs: dict) -> None:
+    """Every classifier's ROC and PR curve on one pair of axes."""
+    curves = {}
+    for name, v in runs.items():
+        if v.get("task") != "classification" or str(v.get("model", "")).startswith("baseline"):
+            continue
+        f = os.path.join(BENCH_DIR, f"{name}_curves.json")
+        if os.path.exists(f):
+            with open(f) as fh:
+                curves[name] = (json.load(fh), v)
+    if not curves:
+        print("  (no classifier curves; skipping)")
+        return
+    models = sorted({v["model"] for _, v in curves.values()})
+    palette = ["#2a78d6", "#eb6834", "#1f9e89", "#8a5cc2"]
+    colour = {m: palette[i % len(palette)] for i, m in enumerate(models)}
+    fig, axes = plt.subplots(1, 2, figsize=(12.4, 5.0))
+    base = None
+    for name, (c, v) in sorted(curves.items()):
+        ls = "--" if v.get("arm") == "pca" else "-"
+        lab = f"{v['model'].replace('_', ' ')} ({'PCA' if v.get('arm') == 'pca' else 'no PCA'})"
+        axes[0].plot(c["fpr"], c["tpr"], color=colour[v["model"]], linestyle=ls, linewidth=1.8,
+                     label=f"{lab}, {v.get('areaUnderROC', float('nan')):.3f}")
+        axes[1].plot(c["recall"], c["precision"], color=colour[v["model"]], linestyle=ls,
+                     linewidth=1.8, label=f"{lab}, {v.get('areaUnderPR', float('nan')):.3f}")
+        base = c.get("positive_rate", base)
+    axes[0].plot([0, 1], [0, 1], color=INK_2, linewidth=1, linestyle=":", label="chance, 0.500")
+    if base is not None:
+        axes[1].axhline(base, color=INK_2, linewidth=1, linestyle=":",
+                        label=f"chance, {base:.3f}")
+    style_axes(axes[0], "false positive rate", "true positive rate", "ROC, test split")
+    style_axes(axes[1], "recall", "precision", "Precision-recall, test split")
+    for ax, loc in ((axes[0], "lower right"), (axes[1], "upper right")):
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1.01)
+        leg = ax.legend(frameon=False, fontsize=8, loc=loc, title="model, area under curve",
+                        title_fontsize=8)
+        for t in leg.get_texts():
+            t.set_color(INK_2)
+    fig.tight_layout()
+    save(fig, "roc_pr_all_classifiers.png")
+
+
+def write_comparison(runs: dict, reference: str, current: str) -> None:
+    """Per model and arm: the reference experiment against this one."""
+    try:
+        ref = load_runs(reference)
+    except Exception as exc:  # noqa: BLE001
+        print(f"  (comparison skipped: {exc})")
+        return
+    lines = [f"Reference `{reference}` against `{current}`, test split, same seed.\n"]
+    for task, key, others in (("regression", "rmse", ["mae", "r2"]),
+                              ("classification", "areaUnderROC", ["areaUnderPR", "f1"])):
+        names = sorted({n for n, v in list(runs.items()) + list(ref.items())
+                        if v.get("task") == task})
+        if not names:
+            continue
+        mets = [key] + others
+        lines.append(f"\n### {task.capitalize()}\n")
+        head = ["model", "arm"] + [f"{m} ({lab})" for m in mets for lab in ("ref", "now")]
+        lines.append("| " + " | ".join(head) + " |")
+        lines.append("|" + "|".join(["---"] * len(head)) + "|")
+        for n in names:
+            a, b = ref.get(n, {}), runs.get(n, {})
+            v = a or b
+            cells = [v.get("model", n), v.get("arm", "")]
+            for m in mets:
+                for src in (a, b):
+                    cells.append(f"{src[m]:.4f}" if m in src else "-")
+            lines.append("| " + " | ".join(str(c) for c in cells) + " |")
+    out = os.path.join(BENCH_DIR, "comparison_table.md")
+    with open(out, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+    print(f"  wrote {out}")
+
+
 def main() -> None:
+    global BENCH_DIR
     ap = argparse.ArgumentParser()
-    ap.add_argument("--experiment", default="flight-delay-mllib")
+    ap.add_argument("--experiment", default=DEFAULT_EXPERIMENT)
+    ap.add_argument("--compare", default=REFERENCE_EXPERIMENT,
+                    help="experiment to set side by side with this one ('' to skip)")
     ap.add_argument("--skip-residuals", action="store_true")
     args = ap.parse_args()
 
+    BENCH_DIR = bench_dir_for(args.experiment)
     os.makedirs(BENCH_DIR, exist_ok=True)
     runs = load_runs(args.experiment)
     print(f"\nrendering figures into {BENCH_DIR}")
     plot_explained_variance()
     plot_importances()
+    plot_importance_grid()
     plot_model_comparison(runs)
-    if not args.skip_residuals:
+    plot_curves_combined(runs)
+    # The residual plot reloads models/best_pipeline, i.e. whatever is in
+    # Production; only meaningful for the experiment that registered it. Every
+    # arm of the newer experiments already has its own residual plot.
+    if not args.skip_residuals and args.experiment == REFERENCE_EXPERIMENT:
         plot_residuals(runs)
     write_table(runs)
+    if args.compare and args.compare != args.experiment:
+        write_comparison(runs, args.compare, args.experiment)
     print("\ndone")
 
 

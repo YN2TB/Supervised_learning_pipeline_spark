@@ -20,7 +20,7 @@ def main() -> None:
         n = df.count()
         print(f"rows: {n:,}\n")
 
-        stages, _ = build_feature_stages(REG_LABEL, use_pca=True, pca_k=10)
+        stages, _ = build_feature_stages(REG_LABEL, use_pca=True, pca_k=10, feature_set="wheelsoff")
 
         # Fit and apply one stage at a time, materialising after each so the
         # timing is attributed to the right stage rather than to a lazy plan.
@@ -46,7 +46,7 @@ def main() -> None:
         # Now the same thing as one Pipeline, which is how CrossValidator runs
         # it: any large gap between the two is plan-rebuild overhead.
         t0 = time.time()
-        stages2, _ = build_feature_stages(REG_LABEL, use_pca=True, pca_k=10)
+        stages2, _ = build_feature_stages(REG_LABEL, use_pca=True, pca_k=10, feature_set="wheelsoff")
         m = Pipeline(stages=stages2 + [lr]).fit(df)
         print(f"\nwhole Pipeline.fit  = {time.time() - t0:7.2f}s")
 

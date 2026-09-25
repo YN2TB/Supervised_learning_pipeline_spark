@@ -26,7 +26,7 @@ DRIVER_MEM="${DRIVER_MEM:-12g}"
 # custom_transformers.py must ship with the job: the serialized PipelineModel
 # refers to those classes by qualified name, so both the driver and every
 # Python worker have to be able to import them.
-PY_FILES="custom_transformers.py,spark_session.py,flight_schema.py,mllib_pipeline.py"
+PY_FILES="custom_transformers.py,spark_session.py,flight_schema.py,mllib_pipeline.py,model_explain.py"
 
 COMMON_CONF=(
   --master "$MASTER"

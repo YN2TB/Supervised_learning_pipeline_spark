@@ -35,9 +35,10 @@ from pyspark.sql import functions as F
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import custom_transformers  # noqa: E402  (for release_caches between arms)
+import model_explain  # noqa: E402
 from custom_transformers import (  # noqa: E402
-    HaversineTransformer, MaterializeCache, OutlierIQRTruncator, RowMatrixPCA,
-    SignedLog1pTransformer, TargetEncoder,
+    FrequencyEncoder, HaversineTransformer, MaterializeCache, OutlierIQRTruncator,
+    RowMatrixPCA, SignedLog1pTransformer, TargetEncoder,
 )
 from spark_session import TRACKING_URI, build_spark, path  # noqa: E402
 
@@ -49,6 +50,7 @@ SPLIT_SEED = 42
 
 REG_LABEL = "label_delay"
 CLF_LABEL = "label_severe"
+WEIGHT_COL = "class_weight"
 
 # ---------------------------------------------------------------------------
 # Feature groups
@@ -84,7 +86,7 @@ LOG_OUT = ["log_distance", "log_sched_time", "log_gc_distance"]
 TARGET_ENC_COLS = ["ORIGIN_AIRPORT", "DESTINATION_AIRPORT", "ROUTE"]
 TARGET_ENC_OUT = ["te_origin", "te_dest", "te_route"]
 
-NUMERIC_FEATURES = (
+WHEELSOFF_NUMERIC = (
     CLIP_OUT + LOG_OUT + TARGET_ENC_OUT
     + ["DEPARTURE_DELAY",  # raw and untransformed - see the note above
        "SCHEDULE_SPEED_MPH", "ROUTE_DETOUR", "SCHED_DEP_MIN", "SCHED_ARR_MIN",
@@ -99,26 +101,124 @@ IMPUTE_COLS = ["SCHEDULE_SPEED_MPH", "ROUTE_DETOUR"]
 
 ONEHOT_NUMERIC = ["MONTH", "DAY_OF_WEEK", "DEP_HOUR"]
 
+# ---------------------------------------------------------------------------
+# Pre-departure feature sets (the current model)
+# ---------------------------------------------------------------------------
+# The wheels-off model above scored R2 0.93, and 0.89 of that is one straight
+# line on DEPARTURE_DELAY (r = 0.9445): legal at wheels-off, but it predicts a
+# delay from a delay that has already happened. The useful question is the one
+# a passenger or a dispatcher asks before the aircraft leaves the gate, so
+# nothing observed at or after pushback may enter the vector.
+PRE_DEPARTURE_FORBIDDEN = [
+    "DEPARTURE_DELAY", "dep_delay_clip", "DEPARTURE_TIME",
+    "TAXI_OUT", "taxi_out_clip", "WHEELS_OFF", "WHEELS_OFF_MIN",
+    "te_origin", "te_dest", "te_route",      # label means, whatever the horizon
+    REG_LABEL, CLF_LABEL, "label_glm", WEIGHT_COL,
+]
+
+# Airport busyness, target-free. See custom_transformers.FrequencyEncoder.
+FREQ_ENC_COLS = ["ORIGIN_AIRPORT", "DESTINATION_AIRPORT", "ROUTE"]
+FREQ_ENC_OUT = ["freq_origin", "freq_dest", "freq_route"]
+
+# Every plausible pre-departure column: the ablation's upper reference.
+PREDEP_ALL_NUMERIC = [
+    "log_distance", "log_sched_time", "log_gc_distance", "SCHEDULE_SPEED_MPH",
+    "ROUTE_DETOUR", "SCHED_DEP_MIN", "SCHED_ARR_MIN", "IS_WEEKEND", "DAY",
+    "ORIGIN_LAT", "ORIGIN_LON", "DEST_LAT", "DEST_LON",
+] + FREQ_ENC_OUT
+
+# The pruned set, from the EDA on the training split (notebook section 11):
+#   dropped as duplicates   log_sched_time (r 0.97 with log_distance),
+#                           log_gc_distance (1.00), SCHEDULE_SPEED_MPH (0.94),
+#                           SCHED_DEP_MIN (0.998 with the DEP_HOUR one-hot),
+#                           IS_WEEKEND (a function of DAY_OF_WEEK)
+#   dropped as empty        ROUTE_DETOUR, DAY (|r| < 0.01 with both targets and
+#                           no mechanism), freq_route (flat across deciles)
+#   kept                    log_distance, SCHED_ARR_MIN (the arrival bank, not
+#                           the same as the departure hour), the four
+#                           coordinates (geography, for the trees), freq_origin,
+#                           freq_dest; plus the one-hot AIRLINE, MONTH,
+#                           DAY_OF_WEEK and DEP_HOUR, which carry most of the
+#                           signal (severe-delay rate 3.9% to 16.9% by hour,
+#                           4.1% to 19.3% by airline, 6.7% to 14.9% by month,
+#                           over all curated flights).
+PREDEP_NUMERIC = [
+    "log_distance", "SCHED_ARR_MIN",
+    "ORIGIN_LAT", "ORIGIN_LON", "DEST_LAT", "DEST_LON",
+    "freq_origin", "freq_dest",
+]
+
+FEATURE_SETS = {
+    # The September tournament's features, kept to reproduce it as a reference.
+    "wheelsoff": dict(numeric=WHEELSOFF_NUMERIC, encoder="target"),
+    "predeparture_all": dict(numeric=PREDEP_ALL_NUMERIC, encoder="frequency"),
+    "predeparture": dict(numeric=PREDEP_NUMERIC, encoder="frequency"),
+    # Ablation: does the frequency encoder earn its stage?
+    "predeparture_nofreq": dict(numeric=[c for c in PREDEP_NUMERIC
+                                         if c not in FREQ_ENC_OUT], encoder="frequency"),
+}
+DEFAULT_FEATURE_SET = "predeparture"
+
+# Kept for the scripts that import it; it names the current feature set.
+NUMERIC_FEATURES = FEATURE_SETS[DEFAULT_FEATURE_SET]["numeric"]
+
+
+def _predeparture_stages(numeric: list) -> list:
+    """Stages up to the one-hot encoders for a pre-departure feature set.
+
+    Deliberately short. No outlier clip: the pre-departure numerics have no
+    outliers worth the name (implied schedule speed tops out at 543 mph,
+    distance is a real quantity whose long tail is transcontinental flights).
+    No target encoding: nothing here is computed from the label.
+    """
+    stages = []
+    derived = {"log_gc_distance", "SCHEDULE_SPEED_MPH", "ROUTE_DETOUR"}
+    if derived & set(numeric):
+        stages.append(HaversineTransformer())
+    log_pairs = [(src, dst) for src, dst in zip(LOG_COLS, LOG_OUT) if dst in numeric]
+    if log_pairs:
+        stages.append(SignedLog1pTransformer(inputCols=[s for s, _ in log_pairs],
+                                             outputCols=[d for _, d in log_pairs]))
+    freq_pairs = [(src, dst) for src, dst in zip(FREQ_ENC_COLS, FREQ_ENC_OUT)
+                  if dst in numeric]
+    if freq_pairs:
+        stages.append(FrequencyEncoder(inputCols=[s for s, _ in freq_pairs],
+                                       outputCols=[d for _, d in freq_pairs]))
+    # A training median for every numeric input, in place, so one malformed
+    # streaming record gets a typical value instead of turning the whole vector
+    # into NaN (and the prediction into a constant).
+    stages.append(Imputer(inputCols=numeric, outputCols=numeric, strategy="median"))
+    return stages
+
 
 def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
-                         svd_mode: str = "local-eigs"):
+                         svd_mode: str = "local-eigs",
+                         feature_set: str = DEFAULT_FEATURE_SET,
+                         pca_variance: float = 0.0):
     """Shared preprocessing. Returns (stages, assembler_input_names)."""
     # svd_mode must stay in step with the --svd-mode CLI default. They disagreed
     # once, and the only caller that omits the argument is
     # scripts/profile_stages.py, which therefore profiled a mode the pipeline
     # itself never ran.
+    spec = FEATURE_SETS[feature_set]
+    numeric = list(spec["numeric"])
     stages = []
 
-    stages.append(OutlierIQRTruncator(inputCols=CLIP_COLS, outputCols=CLIP_OUT,
-                                      iqrMultiplier=1.5))
-    stages.append(HaversineTransformer())
-    stages.append(SignedLog1pTransformer(inputCols=LOG_COLS, outputCols=LOG_OUT))
-    stages.append(Imputer(inputCols=IMPUTE_COLS, outputCols=IMPUTE_COLS,
-                          strategy="median"))
-    # Learned inside _fit, so a Pipeline fitted on the training split (and
-    # refitted per CV fold) can never see a held-out target.
-    stages.append(TargetEncoder(inputCols=TARGET_ENC_COLS, outputCols=TARGET_ENC_OUT,
-                               labelCol=label_col, smoothing=20.0))
+    if spec["encoder"] == "frequency":
+        leaked = [c for c in numeric if c in PRE_DEPARTURE_FORBIDDEN]
+        assert not leaked, f"pre-departure feature set uses {leaked}"
+        stages += _predeparture_stages(numeric)
+    else:
+        stages.append(OutlierIQRTruncator(inputCols=CLIP_COLS, outputCols=CLIP_OUT,
+                                          iqrMultiplier=1.5))
+        stages.append(HaversineTransformer())
+        stages.append(SignedLog1pTransformer(inputCols=LOG_COLS, outputCols=LOG_OUT))
+        stages.append(Imputer(inputCols=IMPUTE_COLS, outputCols=IMPUTE_COLS,
+                              strategy="median"))
+        # Learned inside _fit, so a Pipeline fitted on the training split (and
+        # refitted per CV fold) can never see a held-out target.
+        stages.append(TargetEncoder(inputCols=TARGET_ENC_COLS, outputCols=TARGET_ENC_OUT,
+                                    labelCol=label_col, smoothing=20.0))
 
     # AIRLINE is a string; the rest are already small integer codes.
     stages.append(StringIndexer(inputCol="AIRLINE", outputCol="airline_idx",
@@ -128,12 +228,13 @@ def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
     stages.append(OneHotEncoder(inputCols=ohe_in, outputCols=ohe_out,
                                 handleInvalid="keep", dropLast=True))
 
-    # Everything expensive (the Arrow UDF, the target-encoding joins) is now
-    # behind us; cache here so StandardScaler, PCA and the estimator do not
+    # The upstream fits (encoders, imputer, indexer) are behind us; cache here so StandardScaler, PCA and the estimator do not
     # each re-derive it. See MaterializeCache for the measurement.
     stages.append(MaterializeCache())
 
-    assembler_inputs = NUMERIC_FEATURES + ohe_out
+    assembler_inputs = numeric + ohe_out
+    if spec["encoder"] == "frequency":
+        assert not set(assembler_inputs) & set(PRE_DEPARTURE_FORBIDDEN), assembler_inputs
     stages.append(VectorAssembler(inputCols=assembler_inputs,
                                   outputCol="features_raw", handleInvalid="keep"))
 
@@ -171,7 +272,10 @@ def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
         # Lanczos on distributed A^T(Av) products and no n x n matrix is ever
         # materialised. See custom_transformers.RowMatrixPCA for the caveats -
         # in particular that computeSVD does not centre.
+        # With pca_variance > 0, k is chosen from the data: the fewest
+        # components that reach that share of the variance.
         stages.append(RowMatrixPCA(k=pca_k, svdMode=svd_mode,
+                                   varianceThreshold=pca_variance,
                                    inputCol="features_selected",
                                    outputCol="features"))
     else:
@@ -193,7 +297,9 @@ def resolve_feature_names(fitted_model, sample_df, use_pca: bool, pca_k: int):
     the selector's own choices rather than trying to reconstruct them.
     """
     if use_pca:
-        return [f"PC{i + 1}" for i in range(pca_k)]
+        pca = next((s for s in fitted_model.stages if hasattr(s, "explainedVariance")), None)
+        k = len(pca.explainedVariance) if pca is not None else pca_k
+        return [f"PC{i + 1}" for i in range(k)]
     try:
         transformed = fitted_model.transform(sample_df.limit(10))
         # There is no AttributeGroup in the Python API (it is Scala-only), but
@@ -220,6 +326,13 @@ def resolve_feature_names(fitted_model, sample_df, use_pca: bool, pca_k: int):
 def model_specs(args):
     """Each entry: estimator, grid, task, label column, primary metric."""
     grid = {}
+    # Only 11% of flights are severely late. Unweighted, the classifiers learn
+    # that "never late" is 89% accurate: before departure the signal is weak, and
+    # LinearSVC predicted not-late for every test flight. Balanced weights (each
+    # class carries half the total weight, from the training split) make a
+    # missed delay cost as much as a false alarm. AUC is barely affected; F1 and
+    # the confusion matrix become meaningful.
+    clf_w = {"weightCol": WEIGHT_COL} if args.class_weight == "balanced" else {}
 
     lr = LinearRegression(featuresCol="features", labelCol=REG_LABEL,
                           elasticNetParam=0.5, regParam=0.1, maxIter=50)
@@ -252,7 +365,7 @@ def model_specs(args):
         estimator=glm, task="regression", label="label_glm",
         grid=(ParamGridBuilder().addGrid(glm.regParam, [0.1, 1.0]).build()))
 
-    svc = LinearSVC(featuresCol="features", labelCol=CLF_LABEL, maxIter=30)
+    svc = LinearSVC(featuresCol="features", labelCol=CLF_LABEL, maxIter=30, **clf_w)
     grid["linear_svc"] = dict(
         estimator=svc, task="classification", label=CLF_LABEL,
         grid=(ParamGridBuilder()
@@ -269,7 +382,7 @@ def model_specs(args):
               .build()))
 
     rfc = RandomForestClassifier(featuresCol="features", labelCol=CLF_LABEL,
-                                 numTrees=40, maxDepth=8, maxBins=64, seed=7)
+                                 numTrees=40, maxDepth=8, maxBins=64, seed=7, **clf_w)
     grid["random_forest_classifier"] = dict(
         estimator=rfc, task="classification", label=CLF_LABEL,
         grid=(ParamGridBuilder()
@@ -287,7 +400,7 @@ def model_specs(args):
               .build()))
 
     gbtc = GBTClassifier(featuresCol="features", labelCol=CLF_LABEL,
-                         maxIter=40, maxDepth=5, maxBins=64, seed=7)
+                         maxIter=40, maxDepth=5, maxBins=64, seed=7, **clf_w)
     grid["gbt_classifier"] = dict(
         estimator=gbtc, task="classification", label=CLF_LABEL,
         grid=(ParamGridBuilder()
@@ -375,17 +488,54 @@ def completed_arms(experiment: str) -> dict:
         return {}
 
 
-def checkpoint(results: dict, failures: dict) -> None:
+def checkpoint(results: dict, failures: dict, out_dir: str = BENCH_DIR) -> None:
     """Persist progress after every arm, not just at the end of the loop."""
     try:
-        os.makedirs(BENCH_DIR, exist_ok=True)
-        with open(os.path.join(BENCH_DIR, "tournament_results.json"), "w") as fh:
+        os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, "tournament_results.json"), "w") as fh:
             json.dump(results, fh, indent=2)
         if failures:
-            with open(os.path.join(BENCH_DIR, "tournament_failures.json"), "w") as fh:
+            with open(os.path.join(out_dir, "tournament_failures.json"), "w") as fh:
                 json.dump(failures, fh, indent=2)
     except Exception as exc:  # noqa: BLE001
         print(f"  (checkpoint failed: {exc})")
+
+
+def log_baselines(train, test, n_test: int, args) -> dict:
+    """The "no model" rows every result is read against.
+
+    Regression: predict the training mean delay for every flight. Classification:
+    predict "not severe" for every flight, with one constant score, so AUC is
+    0.5 and AUC-PR is the positive rate. Logged as ordinary runs in the same
+    experiment, so the results table and the MLflow UI show them next to the
+    models. Cheap (one pass over test each), so they are recomputed every run.
+    """
+    out = {}
+    mean_delay = float(train.agg(F.avg(REG_LABEL)).first()[0])
+    severe_rate = float(train.agg(F.avg(CLF_LABEL)).first()[0])
+    from pyspark.ml.functions import array_to_vector
+    for task, label, preds, note in (
+        ("regression", REG_LABEL,
+         test.withColumn("prediction", F.lit(mean_delay)),
+         f"predict the training mean, {mean_delay:.3f} min"),
+        ("classification", CLF_LABEL,
+         test.withColumn("prediction", F.lit(0.0))
+             .withColumn("rawPrediction",
+                         array_to_vector(F.array(F.lit(1.0), F.lit(0.0)))),
+         f"predict not-severe for every flight (training rate {severe_rate:.4f})"),
+    ):
+        run_name = f"baseline_{task}__none"
+        metrics = {m: float(e.evaluate(preds)) for m, e in evaluators(task, label).items()}
+        with mlflow.start_run(run_name=run_name):
+            mlflow.log_params({"model": f"baseline_{task}", "arm": "none", "task": task,
+                               "label": label, "feature_set": args.feature_set,
+                               "baseline": note, "test_rows": n_test,
+                               "sample_fraction": args.sample_fraction})
+            mlflow.log_metrics(metrics)
+        out[run_name] = dict(metrics, model=f"baseline_{task}", arm="none", task=task)
+        print(f"  baseline {task:<14} " + "  ".join(f"{k}={v:.4f}" for k, v in metrics.items())
+              + f"   ({note})")
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +547,17 @@ def main() -> None:
                     help="fraction of TRAIN used for cross-validation search")
     ap.add_argument("--folds", type=int, default=5)
     ap.add_argument("--parallelism", type=int, default=4)
-    ap.add_argument("--pca-k", type=int, default=10)
+    ap.add_argument("--feature-set", default=DEFAULT_FEATURE_SET,
+                    choices=sorted(FEATURE_SETS),
+                    help="predeparture (default): only what is known before the "
+                         "aircraft leaves the gate. predeparture_all: every candidate, "
+                         "the ablation reference. wheelsoff: the September tournament's "
+                         "features, DEPARTURE_DELAY and target encoding included.")
+    ap.add_argument("--pca-variance", type=float, default=0.90,
+                    help="PCA arms keep the fewest components reaching this share of "
+                         "the variance. Ignored when --pca-k is given.")
+    ap.add_argument("--pca-k", type=int, default=None,
+                    help="fixed number of PCA components (overrides --pca-variance)")
     ap.add_argument("--svd-mode", default="local-eigs",
                     choices=["auto", "local-svd", "local-eigs", "dist-eigs"],
                     help="RowMatrix.computeSVD mode for the PCA arms. dist-eigs is "
@@ -413,6 +573,11 @@ def main() -> None:
                          "Spark's ARPACK cannot survive; RowMatrixPCA now serialises "
                          "the solve (custom_transformers._ARPACK_LOCK).")
     ap.add_argument("--models", default="all")
+    ap.add_argument("--class-weight", default="balanced", choices=["balanced", "none"],
+                    help="weight the classifiers' training rows so each class carries "
+                         "half the weight (default), or not at all")
+    ap.add_argument("--arms", default="both", choices=["both", "pca", "nopca"],
+                    help="run only one arm per model, e.g. nopca for a quick ablation")
     ap.add_argument("--register-arm", default="pca",
                     choices=["pca", "nopca", "any"],
                     help="which arm may be promoted to Production. The brief's "
@@ -420,7 +585,15 @@ def main() -> None:
                          "so the shipped artifact must contain a PCA stage - hence the "
                          "default. 'any' restores pure best-RMSE selection, which picks "
                          "the no-PCA arm here (RMSE 10.52 against 21.48).")
-    ap.add_argument("--experiment", default="flight-delay-mllib")
+    ap.add_argument("--experiment", default="flight-delay-predeparture",
+                    help="flight-delay-mllib holds the two wheels-off tournaments")
+    ap.add_argument("--out-dir", default=None,
+                    help="where results and plots go; default docs/benchmarks for "
+                         "flight-delay-mllib, docs/benchmarks/<experiment> otherwise, "
+                         "so a new experiment never overwrites the old artifacts")
+    ap.add_argument("--no-register", action="store_true",
+                    help="skip register_winner: nothing in the Model Registry or in "
+                         "models/ changes. Use for every run you do not mean to ship.")
     ap.add_argument("--resume", dest="resume", action="store_true", default=True,
                     help="skip arms already completed in the tracking store (default)")
     ap.add_argument("--no-resume", dest="resume", action="store_false",
@@ -428,8 +601,15 @@ def main() -> None:
     ap.add_argument("--fail-fast", action="store_true",
                     help="stop on the first failing arm instead of continuing")
     args = ap.parse_args()
+    if args.pca_k is not None:
+        args.pca_variance = 0.0
+    else:
+        args.pca_k = 10          # unused while pca_variance > 0
+    if args.out_dir is None:
+        args.out_dir = (BENCH_DIR if args.experiment == "flight-delay-mllib"
+                        else path("docs", "benchmarks", args.experiment))
 
-    os.makedirs(BENCH_DIR, exist_ok=True)
+    os.makedirs(args.out_dir, exist_ok=True)
     spark = build_spark("mllib-pipeline")
 
     # SQLite rather than the default file store, for two reasons: the MLflow
@@ -466,6 +646,15 @@ def main() -> None:
         train = train.withColumn("label_glm", F.col(REG_LABEL) + F.lit(glm_offset))
         test = test.withColumn("label_glm", F.col(REG_LABEL) + F.lit(glm_offset))
 
+        # Balanced class weights from the training split's positive rate. Test
+        # carries the column only so both frames share a schema; no evaluator
+        # reads it, so every test metric stays unweighted.
+        pos = float(train.agg(F.avg(CLF_LABEL)).first()[0])
+        w_pos, w_neg = 0.5 / pos, 0.5 / (1.0 - pos)
+        weight = F.when(F.col(CLF_LABEL) == 1, F.lit(w_pos)).otherwise(F.lit(w_neg))
+        train = train.withColumn(WEIGHT_COL, weight)
+        test = test.withColumn(WEIGHT_COL, weight)
+
         train = train.cache()
         test = test.cache()
         n_train, n_test = train.count(), test.count()
@@ -475,13 +664,16 @@ def main() -> None:
         # the schema alongside the model is what lets inference.py declare a
         # readStream schema without re-deriving it (and file-source streaming
         # requires an explicit schema anyway).
-        os.makedirs(MODEL_DIR, exist_ok=True)
-        label_cols = {REG_LABEL, CLF_LABEL, "label_glm"}
+        # Written beside the results; register_winner copies it into models/
+        # only when it ships a model, so a dev run cannot desync the contract
+        # from the model that is actually in Production.
+        label_cols = {REG_LABEL, CLF_LABEL, "label_glm", WEIGHT_COL}
         serving = [f for f in train.schema.fields if f.name not in label_cols]
-        with open(os.path.join(MODEL_DIR, "input_schema.json"), "w") as fh:
+        with open(os.path.join(args.out_dir, "input_schema.json"), "w") as fh:
             json.dump({"fields": [{"name": f.name, "type": f.dataType.simpleString()}
                                   for f in serving],
-                       "glm_offset": glm_offset}, fh, indent=2)
+                       "glm_offset": glm_offset,
+                       "feature_set": args.feature_set}, fh, indent=2)
 
         # Tuning runs on a sample; the winning params are then refitted on the
         # full training set. 7 model families x 5 folds x grid over 4.5M rows
@@ -502,23 +694,26 @@ def main() -> None:
             print("")
 
         results, failures = {}, {}
+        results.update(log_baselines(train, test, n_test, args))
+        checkpoint(results, failures, args.out_dir)
         for name in wanted:
             spec = specs[name]
             print(f"=== {name} ===")
-            for use_pca in (True, False):
+            for use_pca in {"both": (True, False), "pca": (True,), "nopca": (False,)}[args.arms]:
                 arm = "pca" if use_pca else "nopca"
                 run_name = f"{name}__{arm}"
                 if args.resume and run_name in already_done:
                     results[run_name] = already_done[run_name]
                     print(f"  {arm:<5} skipped - already complete")
-                    checkpoint(results, failures)
+                    checkpoint(results, failures, args.out_dir)
                     continue
 
                 try:
                     t0 = time.time()
 
                     stages, feature_names = build_feature_stages(
-                        spec["label"], use_pca, args.pca_k, args.svd_mode)
+                        spec["label"], use_pca, args.pca_k, args.svd_mode,
+                        args.feature_set, args.pca_variance)
                     pipeline = Pipeline(stages=stages + [spec["estimator"]])
                     evals = evaluators(spec["task"], spec["label"])
                     primary = "rmse" if spec["task"] == "regression" else "areaUnderROC"
@@ -539,7 +734,12 @@ def main() -> None:
                             "model": name, "arm": arm, "task": spec["task"],
                             "label": spec["label"], "folds": args.folds,
                             "parallelism": args.parallelism,
-                            "pca_k": args.pca_k if use_pca else 0,
+                            "feature_set": args.feature_set,
+                            "class_weight": args.class_weight
+                                            if spec["task"] == "classification" else "",
+                            "pca_k": (args.pca_k if not args.pca_variance else "auto")
+                                     if use_pca else 0,
+                            "pca_variance_target": args.pca_variance if use_pca else 0,
                             "svd_mode": args.svd_mode if use_pca else "",
                             "tune_rows": n_tune, "train_rows": n_train,
                             "test_rows": n_test, "grid_size": len(spec["grid"]),
@@ -565,7 +765,8 @@ def main() -> None:
                                 {spec["estimator"].getParam(k): v
                                  for k, v in best_params.items()})
                             stages2, _ = build_feature_stages(
-                                spec["label"], use_pca, args.pca_k, args.svd_mode)
+                                spec["label"], use_pca, args.pca_k, args.svd_mode,
+                                args.feature_set, args.pca_variance)
                             final = Pipeline(stages=stages2 + [best_est]).fit(train)
 
                         preds = final.transform(test)
@@ -578,6 +779,7 @@ def main() -> None:
                                          if hasattr(s, "explainedVariance")][0]
                             ev = list(map(float, pca_stage.explainedVariance.toArray()))
                             mlflow.log_metric("pca_variance_retained", float(sum(ev)))
+                            mlflow.log_metric("pca_k_chosen", len(ev))
                             # One file per arm. Every PCA arm used to write the
                             # same filename, so the seven of them overwrote each
                             # other and the survivor was whichever finished last
@@ -587,22 +789,19 @@ def main() -> None:
                             # reaching PCA is not the same for the two tasks.
                             # register_winner writes the canonical file.
                             ev_path = os.path.join(
-                                BENCH_DIR, f"pca_explained_variance__{run_name}.json")
+                                args.out_dir, f"pca_explained_variance__{run_name}.json")
                             with open(ev_path, "w") as fh:
                                 json.dump(ev, fh)
                             mlflow.log_artifact(ev_path)
 
-                        est_stage = final.stages[-1]
-                        if hasattr(est_stage, "featureImportances"):
-                            imp = list(map(float, est_stage.featureImportances.toArray()))
-                            names = resolve_feature_names(final, train, use_pca, args.pca_k)
-                            if len(names) != len(imp):
-                                names = [f"f{i}" for i in range(len(imp))]
-                            payload = {"arm": arm, "features": names, "importances": imp}
-                            fp = os.path.join(BENCH_DIR, f"importance_{run_name}.json")
-                            with open(fp, "w") as fh:
-                                json.dump(payload, fh)
-                            mlflow.log_artifact(fp)
+                        # Importance for every model (trees and linear alike,
+                        # PCA arms carried back to the original features), ROC and
+                        # PR curves for classifiers, residual plots for
+                        # regressors; all logged under the run's plots/.
+                        model_explain.explain_arm(
+                            final, train, preds, task=spec["task"], label=spec["label"],
+                            n_test=n_test, metrics=metrics, run_name=run_name,
+                            out_dir=args.out_dir)
 
                         results[run_name] = dict(metrics, model=name, arm=arm,
                                                  task=spec["task"], **{
@@ -622,7 +821,7 @@ def main() -> None:
                         raise
                     if mlflow.active_run():
                         mlflow.end_run(status="FAILED")
-                    checkpoint(results, failures)
+                    checkpoint(results, failures, args.out_dir)
                     continue
 
                 # Release what MaterializeCache persisted for this arm's fits.
@@ -631,20 +830,24 @@ def main() -> None:
                 if freed:
                     print(f"  {'':<5} released {freed} cached frame(s)")
 
-                checkpoint(results, failures)
+                checkpoint(results, failures, args.out_dir)
 
-        with open(os.path.join(BENCH_DIR, "tournament_results.json"), "w") as fh:
+        with open(os.path.join(args.out_dir, "tournament_results.json"), "w") as fh:
             json.dump(results, fh, indent=2)
-        print(f"\nwrote {os.path.join(BENCH_DIR, 'tournament_results.json')}")
+        print(f"\nwrote {os.path.join(args.out_dir, 'tournament_results.json')}")
 
-        register_winner(results, args)
+        if args.no_register:
+            print("--no-register: Model Registry and models/ left untouched")
+        else:
+            register_winner(results, args)
     finally:
         spark.stop()
 
 
 def register_winner(results: dict, args) -> None:
     """Register the best regression pipeline and promote Staging -> Production."""
-    reg = {k: v for k, v in results.items() if v["task"] == "regression"}
+    reg = {k: v for k, v in results.items() if v["task"] == "regression"
+           and not str(v.get("model", "")).startswith("baseline")}
     if not reg:
         print("no regression runs to register")
         return
@@ -724,7 +927,9 @@ def register_winner(results: dict, args) -> None:
     won_label = win.data.params.get("label", REG_LABEL)
     meta_path = os.path.join(MODEL_DIR, "input_schema.json")
     try:
-        shutil.copy2(meta_path, meta_path + ".previous")
+        if os.path.exists(meta_path):
+            shutil.copy2(meta_path, meta_path + ".previous")
+        shutil.copy2(os.path.join(args.out_dir, "input_schema.json"), meta_path)
         with open(meta_path) as fh:
             meta = json.load(fh)
         meta["label"] = won_label
@@ -758,7 +963,7 @@ def register_winner(results: dict, args) -> None:
         pca = [st for st in staged.stages if hasattr(st, "explainedVariance")]
         if pca:
             ev = list(map(float, pca[0].explainedVariance.toArray()))
-            with open(os.path.join(BENCH_DIR, "pca_explained_variance.json"), "w") as fh:
+            with open(os.path.join(args.out_dir, "pca_explained_variance.json"), "w") as fh:
                 json.dump(ev, fh)
             print(f"wrote pca_explained_variance.json from the registered model "
                   f"({100 * sum(ev):.3f}% retained)")

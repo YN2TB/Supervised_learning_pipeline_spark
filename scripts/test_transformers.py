@@ -1,6 +1,6 @@
 """Phase 2 gate: prove the custom stages are leak-proof and serializable.
 
-These four checks exist because each guards a specific failure that would
+These checks exist because each guards a specific failure that would
 otherwise surface much later, in the streaming job:
 
   1. The IQR fences learned on train stay frozen when the model is applied to
@@ -12,6 +12,12 @@ otherwise surface much later, in the streaming job:
      categories it has never seen, and reproduces exactly after reload.
   4. The Arrow haversine UDF agrees with the DISTANCE column the data
      already carries - an independent check that the vectorised maths is right.
+  5. Frequency encoding (the target-free replacement for target encoding)
+     learns from train only, needs no label, and encodes unseen keys as 0.
+  6. PCA by explained variance picks the same k as NumPy on the same data.
+  7. The pre-departure pipeline: nothing observed at or after pushback and
+     nothing computed from the label reaches the vector, and a null input is
+     imputed rather than turning the vector into NaN.
 
 Run:  source ./env.sh && python scripts/test_transformers.py
 """
@@ -26,9 +32,11 @@ from pyspark.ml import Pipeline, PipelineModel
 from pyspark.sql import functions as F
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import numpy as np  # noqa: E402
+
 from custom_transformers import (  # noqa: E402
-    HaversineTransformer, MaterializeCache, OutlierIQRTruncator,
-    SignedLog1pTransformer, TargetEncoder,
+    FrequencyEncoder, HaversineTransformer, MaterializeCache, OutlierIQRTruncator,
+    RowMatrixPCA, SignedLog1pTransformer, TargetEncoder,
 )
 from spark_session import build_spark, path  # noqa: E402
 
@@ -156,6 +164,71 @@ def main() -> int:
                     F.expr("percentile_approx(e, 0.99)").alias("p99")).first()
         check("median |haversine - DISTANCE| under 5 mi", s["med"] < 5.0,
               f"median={s['med']:.2f} mi  p99={s['p99']:.2f} mi")
+
+        # ---- 5. frequency encoding: train-only, label-free, unseen -> 0 -----
+        print("\n== 5. frequency encoding is train-only and never reads the label ==")
+        fe_model = FrequencyEncoder(inputCols=["ORIGIN_AIRPORT", "ROUTE"],
+                                    outputCols=["freq_origin", "freq_route"]).fit(
+            train.drop("label_delay", "label_severe"))   # it must not need them
+        fmap = fe_model.mapping()
+        n_train = train.count()
+        top = train.groupBy("ORIGIN_AIRPORT").count().orderBy(F.desc("count")).first()
+        expect = float(np.log1p(1e6 * top["count"] / n_train))
+        check("encoding is log1p(share per million) of the training rows",
+              abs(fmap["ORIGIN_AIRPORT"][top["ORIGIN_AIRPORT"]] - expect) < 1e-9,
+              f"{top['ORIGIN_AIRPORT']}: {expect:.4f}")
+        check("encoder learned only routes present in train",
+              set(fmap["ROUTE"]).issubset(train_keys), f"{len(fmap['ROUTE']):,} routes")
+        if unseen:
+            enc = (fe_model.transform(test).filter(F.col("ROUTE") == unseen[0][0])
+                   .select("freq_route").first()[0])
+            check("unseen route encodes to 0", enc == 0.0, f"encoded={enc}")
+        fe_path = os.path.join(tmp, "freq")
+        PipelineModel(stages=[fe_model]).write().overwrite().save(fe_path)
+        fe_back = PipelineModel.load(fe_path).stages[0]
+        check("FrequencyEncoderModel round-trips as its own class",
+              type(fe_back).__name__ == "FrequencyEncoderModel"
+              and fe_back.mapping() == fmap)
+
+        # ---- 6. PCA by explained variance ----------------------------------
+        print("\n== 6. RowMatrixPCA keeps the fewest components reaching the threshold ==")
+        from pyspark.ml.feature import VectorAssembler
+        num = ["DISTANCE", "SCHEDULED_TIME", "SCHED_DEP_MIN", "SCHED_ARR_MIN",
+               "ORIGIN_LAT", "ORIGIN_LON", "DEST_LAT", "DEST_LON", "DAY", "MONTH"]
+        vec = VectorAssembler(inputCols=num, outputCol="v").transform(
+            train.select(*[F.col(c).cast("double") for c in num]))
+        from pyspark.ml.feature import StandardScaler
+        vec = (StandardScaler(inputCol="v", outputCol="x", withMean=False)
+               .fit(vec).transform(vec).select("x").cache())
+        X = np.array([r[0].toArray() for r in vec.collect()])
+        lam = np.clip(np.linalg.eigvalsh(np.cov(X, rowvar=False, bias=True))[::-1], 0, None)
+        cum = np.cumsum(lam) / lam.sum()
+        k_np = int(np.argmax(cum >= 0.9)) + 1
+        pca_model = RowMatrixPCA(inputCol="x", outputCol="pcs",
+                                 varianceThreshold=0.9).fit(vec)
+        ev = pca_model.explainedVariance.toArray()
+        check("k matches NumPy on the same covariance", len(ev) == k_np,
+              f"k={len(ev)} numpy={k_np} retained={ev.sum():.4f}")
+        check("retained variance reaches the threshold, one fewer does not",
+              ev.sum() >= 0.9 - 1e-9 and ev[:-1].sum() < 0.9,
+              f"{ev[:-1].sum():.4f} < 0.9 <= {ev.sum():.4f}")
+
+        # ---- 7. the pre-departure pipeline -----------------------------------
+        print("\n== 7. pre-departure feature stages ==")
+        from mllib_pipeline import PRE_DEPARTURE_FORBIDDEN, build_feature_stages
+        stages, inputs = build_feature_stages("label_severe", use_pca=True, pca_k=10,
+                                              pca_variance=0.9)
+        check("no forbidden or label-derived column reaches the assembler",
+              not set(inputs) & set(PRE_DEPARTURE_FORBIDDEN), ", ".join(inputs))
+        check("no target encoder in the pipeline",
+              not any(type(s).__name__ == "TargetEncoder" for s in stages),
+              " > ".join(type(s).__name__ for s in stages))
+        pm = Pipeline(stages=stages).fit(train)
+        broken = test.withColumn("SCHED_ARR_MIN", F.lit(None).cast("int")).limit(50)
+        nan_rows = sum(int(np.isnan(r[0].toArray()).any())
+                       for r in pm.transform(broken).select("features").collect())
+        check("a null numeric input is imputed, not turned into NaN", nan_rows == 0,
+              f"{nan_rows} NaN vectors out of 50")
 
         ok = all(results)
         print(f"\n{'ALL CHECKS PASSED' if ok else 'TRANSFORMER TESTS FAILED'} "
