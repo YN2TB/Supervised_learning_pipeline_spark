@@ -215,9 +215,15 @@ def main() -> int:
 
         # ---- 7. the pre-departure pipeline -----------------------------------
         print("\n== 7. pre-departure feature stages ==")
-        from mllib_pipeline import PRE_DEPARTURE_FORBIDDEN, build_feature_stages
+        from mllib_pipeline import (DEFAULT_FEATURE_SET, FEATURE_SETS, PRE_DEPARTURE_FORBIDDEN,
+                                    add_context_features, build_feature_stages)
         stages, inputs = build_feature_stages("label_severe", use_pca=True, pca_k=10,
                                               pca_variance=0.9)
+        # The default set reads the aircraft's previous leg: join it the way the
+        # tournament does, from the whole sample, after the split.
+        numeric = FEATURE_SETS[DEFAULT_FEATURE_SET]["numeric"]
+        train = add_context_features(spark, df, train, numeric).cache()
+        test = add_context_features(spark, df, test, numeric).cache()
         check("no forbidden or label-derived column reaches the assembler",
               not set(inputs) & set(PRE_DEPARTURE_FORBIDDEN), ", ".join(inputs))
         check("no target encoder in the pipeline",

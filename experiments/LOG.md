@@ -127,6 +127,41 @@ gaps as ties.
   prev_air_gain = prev_arr_delay − prev_dep_delay (what the inbound made up or lost
   in the air), nearly uncorrelated with prev_arr_delay. Not yet tested.
 
+### 2026-09-26 02:20–03:00 · prev_air_gain, and dropping the frequency encoder (1%)
+
+One change at a time against `predeparture_inbound`:
+
+| model | inbound | lean | inbound_gain | final |
+|---|---|---|---|---|
+| GBT classifier AUC | 0.835 | 0.833 | 0.836 | 0.834 |
+| RF classifier AUC | 0.835 | 0.826 | 0.834 | 0.830 |
+| LinearSVC AUC | 0.802 | 0.792 | 0.801 | 0.799 |
+| RF regressor R² | 0.313 | 0.296 | 0.316 | 0.316 |
+| GBT regressor R² | 0.311 | 0.297 | 0.309 | 0.312 |
+| LinearRegression R² | 0.267 | 0.258 | 0.267 | 0.266 |
+| GLM Poisson R² | 0.191 | 0.190 | 0.200 | 0.200 |
+
+- `inbound_gain` (prev_dep_delay → prev_air_gain) recovers what `lean` lost: the
+  information stays, the near-duplicate goes.
+- `final` (gain, without the frequency encoder) ties `inbound_gain` (≤ 0.005).
+- **Decided:** `predeparture_final` is the tournament set and the new
+  `DEFAULT_FEATURE_SET`: log_distance, SCHED_ARR_MIN, the four coordinates,
+  leg_of_day, has_prev, turn_slack, prev_arr_delay, prev_air_gain, inbound_overrun,
+  plus one-hot airline, month, weekday, hour. has_prev stays because it marks
+  prev_* on a first leg as an imputed median. GLM stays Poisson/log (the brief);
+  its gap to identity is documented above.
+- Gates after the switch: smoke 5/5, transformers 17/17.
+
+## 2026-09-26 03:0x · Full tournament, flight-delay-predeparture
+
+- **Command:** `python -u mllib_pipeline.py --feature-set predeparture_final --no-register`
+  (full data, 10% tuning sample, 5 folds, 7 models × PCA-by-90%-EVR / no-PCA),
+  launched in its own PowerShell window so a low-memory reap of Claude Code's
+  background shells cannot stop it. Log: `.spark-tmp/tournament_predeparture.log`.
+- **Backup before it:** `backup_pre_tournament_predep_20260926_030321/`
+  (mlflow.db, models). `--no-register`: the registry keeps v4 in Production.
+- **Result:** _pending_
+
 ### 2026-09-26 00:5x · Queue stopped: system low on memory
 
 Claude Code stopped the Q2 shell while the machine was critically short of memory.

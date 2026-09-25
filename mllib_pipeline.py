@@ -314,7 +314,9 @@ FEATURE_SETS = {
     "predeparture_sched_congestion": dict(
         numeric=PREDEP_NUMERIC + ROT_SCHEDULE + CONGESTION_COLS, encoder="frequency"),
 }
-DEFAULT_FEATURE_SET = "predeparture"
+# Chosen by the trials in experiments/LOG.md (2026-09-26): pre-departure,
+# aircraft rotation with prev_air_gain, no frequency encoder, no congestion.
+DEFAULT_FEATURE_SET = "predeparture_final"
 
 # Kept for the scripts that import it; it names the current feature set.
 NUMERIC_FEATURES = FEATURE_SETS[DEFAULT_FEATURE_SET]["numeric"]
