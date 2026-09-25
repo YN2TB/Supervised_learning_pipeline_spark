@@ -8,8 +8,7 @@ after the pipeline's transformations.
                           what the wheels-off model leaned on; the pre-departure
                           model may not use them.
     --stage transformed   what the VectorAssembler receives for the
-                          predeparture_all feature set (5% sample of train):
-                          log transforms, the
+                          predeparture_all feature set: log transforms, the
                           Haversine-derived columns, the frequency encodings,
                           all imputed; stages fitted on the training split.
     --stage wheelsoff     the September tournament's 20 numeric features after
@@ -38,7 +37,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
 from pyspark.ml import Pipeline, PipelineModel  # noqa: E402
-from pyspark.ml.feature import VectorAssembler  # noqa: E402
 from pyspark.sql import functions as F  # noqa: E402
 
 from mllib_pipeline import (CLF_LABEL, CURATED, FEATURE_SETS, REG_LABEL,  # noqa: E402
@@ -56,7 +54,6 @@ RAW_COLUMNS = [
     "DEPARTURE_DELAY", "TAXI_OUT",          # reference: known only at wheels-off
 ]
 LABELS = [REG_LABEL, CLF_LABEL]
-TRANSFORMED_SAMPLE = 0.05
 TITLES = {
     "raw": "Candidate columns before transformation",
     "transformed": "Pre-departure features after transformation",
@@ -75,13 +72,6 @@ def frame_for(stage: str, train):
         cols = RAW_COLUMNS
         return train.select(*[F.col(c).cast("double") for c in cols + LABELS]), cols
     if stage == "transformed":
-        # A 5% sample of train: ~228k rows, standard error of r about 0.002,
-        # ample for judging redundancy. At 25% and at full size the Python
-        # worker running the Haversine Arrow UDF died mid-stage every time
-        # (EOFError / connection reset), under Correlation.corr and under a
-        # plain SQL aggregation alike; at 5% it runs. Unresolved; the pruned
-        # feature set the model uses does not include that UDF.
-        train = train.sample(False, TRANSFORMED_SAMPLE, seed=1)
         cols = list(FEATURE_SETS["predeparture_all"]["numeric"])
         model = Pipeline(stages=_predeparture_stages(cols)).fit(train)
         return model.transform(train).select(*cols, *LABELS), cols
@@ -98,9 +88,8 @@ def compute(stage: str):
     frame, feats = frame_for(stage, train)
     cols = feats + LABELS
     # One SQL aggregation: every pairwise Pearson r plus the row count, in a
-    # single pass. Correlation.corr (which goes through an RDD) was tried first
-    # and crashed the Python worker of the Haversine Arrow UDF three times out
-    # of three on this plan, at full size and on a 25% sample alike.
+    # single pass. (A Python worker crash seen here once was intermittent, not
+    # caused by this plan; spark_session now lets a task retry.)
     clean = frame.select(*[F.col(c).cast("double") for c in cols]).dropna()
     pairs = [(i, j) for i in range(len(cols)) for j in range(i + 1, len(cols))]
     row = clean.agg(F.count(F.lit(1)).alias("n"),
@@ -155,9 +144,7 @@ def draw(corr: np.ndarray, cols: list[str], rows: int, stage: str, png: str) -> 
     cb.outline.set_visible(False)
     cb.ax.tick_params(labelsize=8, colors=MUTED, length=0)
     cb.set_label("Pearson correlation", color=MUTED, fontsize=9)
-    where = ("5% sample of the training split" if stage == "transformed"
-             else "training split")
-    ax.set_title(f"{TITLES[stage]}, {where} ({rows:,} rows)",
+    ax.set_title(f"{TITLES[stage]}, training split ({rows:,} rows)",
                  loc="left", fontsize=12, color=INK, pad=12)
     fig.tight_layout()
     fig.savefig(png, facecolor=SURFACE)
@@ -180,9 +167,7 @@ def main() -> None:
                      for c in feats), key=lambda d: -abs(d["r"]))
         for lab in LABELS}
     result = {
-        "source": f"stage={stage}, "
-                  + ("5% sample of the " if stage == "transformed" else "")
-                  + "training split (make_split, cores='*'); pre-scaling "
+        "source": f"stage={stage}, training split (make_split, cores='*'); pre-scaling "
                   "values, Pearson, one Spark SQL aggregation",
         "rows": rows,
         "columns": cols,

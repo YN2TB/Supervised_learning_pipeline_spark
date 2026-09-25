@@ -501,6 +501,63 @@ def checkpoint(results: dict, failures: dict, out_dir: str = BENCH_DIR) -> None:
         print(f"  (checkpoint failed: {exc})")
 
 
+# ---------------------------------------------------------------------------
+# Safe pause
+# ---------------------------------------------------------------------------
+# A full tournament runs for hours on a laptop. To stop it without losing work:
+#
+#     touch .pause_tournament          (PowerShell: ni .pause_tournament)
+#
+# The run stops at the next safe point - before an arm starts, or right after an
+# arm's cross-validation, whose result is saved first - and exits cleanly. Delete
+# the file and rerun the SAME command to continue: finished arms are skipped
+# (--resume, the default) and a checkpointed arm goes straight to its refit.
+# Ctrl+C also stops cleanly, but loses the arm in progress.
+PAUSE_FILE = path(".pause_tournament")
+
+
+class Paused(BaseException):
+    """Raised at a safe point when PAUSE_FILE exists. BaseException, so the
+    per-arm ``except Exception`` does not record it as a failure."""
+
+
+def pause_requested() -> bool:
+    return os.path.exists(PAUSE_FILE)
+
+
+def cv_checkpoint_path(args, run_name: str) -> str:
+    return os.path.join(args.out_dir, "cv_checkpoints", f"{run_name}.json")
+
+
+def cv_checkpoint_key(args) -> dict:
+    """What must match for a saved CV result to be reused."""
+    return {"feature_set": args.feature_set, "sample_fraction": args.sample_fraction,
+            "tune_fraction": args.tune_fraction, "folds": args.folds,
+            "pca_variance": args.pca_variance, "pca_k": args.pca_k,
+            "class_weight": args.class_weight, "experiment": args.experiment}
+
+
+def load_cv_checkpoint(args, run_name: str):
+    f = cv_checkpoint_path(args, run_name)
+    if not (args.resume and os.path.exists(f)):
+        return None
+    with open(f) as fh:
+        saved = json.load(fh)
+    if saved.get("key") != cv_checkpoint_key(args):
+        print(f"  (ignoring stale CV checkpoint for {run_name}: settings differ)")
+        return None
+    return saved
+
+
+def save_cv_checkpoint(args, run_name: str, best_params: dict, primary: str,
+                       value: float) -> None:
+    f = cv_checkpoint_path(args, run_name)
+    os.makedirs(os.path.dirname(f), exist_ok=True)
+    with open(f, "w") as fh:
+        json.dump({"key": cv_checkpoint_key(args), "best_params": best_params,
+                   "primary": primary, "value": value}, fh, indent=2)
+
+
 def log_baselines(train, test, n_test: int, args) -> dict:
     """The "no model" rows every result is read against.
 
@@ -610,6 +667,9 @@ def main() -> None:
                         else path("docs", "benchmarks", args.experiment))
 
     os.makedirs(args.out_dir, exist_ok=True)
+    if pause_requested():
+        print(f"{PAUSE_FILE} exists, so the run would pause at once. Delete it to run.")
+        return
     spark = build_spark("mllib-pipeline")
 
     # SQLite rather than the default file store, for two reasons: the MLflow
@@ -696,152 +756,186 @@ def main() -> None:
         results, failures = {}, {}
         results.update(log_baselines(train, test, n_test, args))
         checkpoint(results, failures, args.out_dir)
-        for name in wanted:
-            spec = specs[name]
-            print(f"=== {name} ===")
-            for use_pca in {"both": (True, False), "pca": (True,), "nopca": (False,)}[args.arms]:
-                arm = "pca" if use_pca else "nopca"
-                run_name = f"{name}__{arm}"
-                if args.resume and run_name in already_done:
-                    results[run_name] = already_done[run_name]
-                    print(f"  {arm:<5} skipped - already complete")
-                    checkpoint(results, failures, args.out_dir)
-                    continue
+        try:
+            run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
+                     already_done, results, failures)
+        except (Paused, KeyboardInterrupt) as stop:
+            if mlflow.active_run():
+                mlflow.end_run(status="KILLED")
+            checkpoint(results, failures, args.out_dir)
+            how = f"paused {stop}" if isinstance(stop, Paused) else "interrupted (Ctrl+C)"
+            print(f"\n{how}. {len(results)} result(s) kept in {args.out_dir}.")
+            print(f"To continue: delete {PAUSE_FILE} if present, then rerun the same command.")
+            return
+        _finish(results, args)
+    finally:
+        spark.stop()
 
-                try:
-                    t0 = time.time()
 
-                    stages, feature_names = build_feature_stages(
-                        spec["label"], use_pca, args.pca_k, args.svd_mode,
-                        args.feature_set, args.pca_variance)
-                    pipeline = Pipeline(stages=stages + [spec["estimator"]])
-                    evals = evaluators(spec["task"], spec["label"])
-                    primary = "rmse" if spec["task"] == "regression" else "areaUnderROC"
+def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
+             already_done, results, failures) -> None:
+    """The tournament loop. Pauses by raising Paused at a safe point."""
+    for name in wanted:
+        spec = specs[name]
+        print(f"=== {name} ===")
+        for use_pca in {"both": (True, False), "pca": (True,), "nopca": (False,)}[args.arms]:
+            arm = "pca" if use_pca else "nopca"
+            run_name = f"{name}__{arm}"
+            if args.resume and run_name in already_done:
+                results[run_name] = already_done[run_name]
+                print(f"  {arm:<5} skipped - already complete")
+                checkpoint(results, failures, args.out_dir)
+                continue
+            if pause_requested():
+                raise Paused(f"before {run_name}")
 
-                    cv = CrossValidator(
-                        estimator=pipeline,
-                        estimatorParamMaps=spec["grid"],
-                        evaluator=evals[primary],
-                        numFolds=args.folds,
-                        # Evaluate grid points concurrently across executor slots
-                        # rather than one after another.
-                        parallelism=args.parallelism,
-                        seed=SPLIT_SEED,
-                        collectSubModels=False)
+            try:
+                t0 = time.time()
 
-                    with mlflow.start_run(run_name=run_name):
-                        mlflow.log_params({
-                            "model": name, "arm": arm, "task": spec["task"],
-                            "label": spec["label"], "folds": args.folds,
-                            "parallelism": args.parallelism,
-                            "feature_set": args.feature_set,
-                            "class_weight": args.class_weight
-                                            if spec["task"] == "classification" else "",
-                            "pca_k": (args.pca_k if not args.pca_variance else "auto")
-                                     if use_pca else 0,
-                            "pca_variance_target": args.pca_variance if use_pca else 0,
-                            "svd_mode": args.svd_mode if use_pca else "",
-                            "tune_rows": n_tune, "train_rows": n_train,
-                            "test_rows": n_test, "grid_size": len(spec["grid"]),
-                            "sample_fraction": args.sample_fraction,
-                        })
+                stages, feature_names = build_feature_stages(
+                    spec["label"], use_pca, args.pca_k, args.svd_mode,
+                    args.feature_set, args.pca_variance)
+                pipeline = Pipeline(stages=stages + [spec["estimator"]])
+                evals = evaluators(spec["task"], spec["label"])
+                primary = "rmse" if spec["task"] == "regression" else "areaUnderROC"
 
+                cv = CrossValidator(
+                    estimator=pipeline,
+                    estimatorParamMaps=spec["grid"],
+                    evaluator=evals[primary],
+                    numFolds=args.folds,
+                    # Evaluate grid points concurrently across executor slots
+                    # rather than one after another.
+                    parallelism=args.parallelism,
+                    seed=SPLIT_SEED,
+                    collectSubModels=False)
+
+                with mlflow.start_run(run_name=run_name):
+                    mlflow.log_params({
+                        "model": name, "arm": arm, "task": spec["task"],
+                        "label": spec["label"], "folds": args.folds,
+                        "parallelism": args.parallelism,
+                        "feature_set": args.feature_set,
+                        "class_weight": args.class_weight
+                                        if spec["task"] == "classification" else "",
+                        "pca_k": (args.pca_k if not args.pca_variance else "auto")
+                                 if use_pca else 0,
+                        "pca_variance_target": args.pca_variance if use_pca else 0,
+                        "svd_mode": args.svd_mode if use_pca else "",
+                        "tune_rows": n_tune, "train_rows": n_train,
+                        "test_rows": n_test, "grid_size": len(spec["grid"]),
+                        "sample_fraction": args.sample_fraction,
+                    })
+
+                    saved = load_cv_checkpoint(args, run_name)
+                    cv_model = None
+                    if saved is not None:
+                        best_params, cv_value = saved["best_params"], saved["value"]
+                        print(f"  {arm:<5} CV restored from checkpoint")
+                        mlflow.set_tag("cv_restored_from_checkpoint", "true")
+                    else:
                         cv_model = cv.fit(tune)
-                        # CrossValidator ranks by the evaluator's own direction, so
-                        # read that rather than assuming higher-is-better.
+                        # CrossValidator ranks by the evaluator's own direction,
+                        # so read that rather than assuming higher-is-better.
                         avg = cv_model.avgMetrics
                         pick = max if evals[primary].isLargerBetter() else min
                         best_idx = pick(range(len(avg)), key=lambda i: avg[i])
                         best_params = {
                             p.name: v
                             for p, v in cv_model.getEstimatorParamMaps()[best_idx].items()}
-                        mlflow.log_metric("cv_best_" + primary, float(avg[best_idx]))
-                        mlflow.log_params({f"best_{k}": v for k, v in best_params.items()})
+                        cv_value = float(avg[best_idx])
+                        save_cv_checkpoint(args, run_name, best_params, primary, cv_value)
+                    mlflow.log_metric("cv_best_" + primary, cv_value)
+                    mlflow.log_params({f"best_{k}": v for k, v in best_params.items()})
+                    if pause_requested():
+                        raise Paused(f"{run_name} after cross-validation (saved)")
 
-                        # Refit the winning configuration on the full training set.
-                        final = cv_model.bestModel if args.tune_fraction >= 1.0 else None
-                        if final is None:
-                            best_est = spec["estimator"].copy(
-                                {spec["estimator"].getParam(k): v
-                                 for k, v in best_params.items()})
-                            stages2, _ = build_feature_stages(
-                                spec["label"], use_pca, args.pca_k, args.svd_mode,
-                                args.feature_set, args.pca_variance)
-                            final = Pipeline(stages=stages2 + [best_est]).fit(train)
+                    # Refit the winning configuration on the full training set.
+                    final = (cv_model.bestModel
+                             if cv_model is not None and args.tune_fraction >= 1.0
+                             else None)
+                    if final is None:
+                        best_est = spec["estimator"].copy(
+                            {spec["estimator"].getParam(k): v
+                             for k, v in best_params.items()})
+                        stages2, _ = build_feature_stages(
+                            spec["label"], use_pca, args.pca_k, args.svd_mode,
+                            args.feature_set, args.pca_variance)
+                        final = Pipeline(stages=stages2 + [best_est]).fit(train)
 
-                        preds = final.transform(test)
-                        metrics = {m: float(e.evaluate(preds)) for m, e in evals.items()}
-                        metrics["train_seconds"] = time.time() - t0
-                        mlflow.log_metrics(metrics)
+                    preds = final.transform(test)
+                    metrics = {m: float(e.evaluate(preds)) for m, e in evals.items()}
+                    metrics["train_seconds"] = time.time() - t0
+                    mlflow.log_metrics(metrics)
 
-                        if use_pca:
-                            pca_stage = [s for s in final.stages
-                                         if hasattr(s, "explainedVariance")][0]
-                            ev = list(map(float, pca_stage.explainedVariance.toArray()))
-                            mlflow.log_metric("pca_variance_retained", float(sum(ev)))
-                            mlflow.log_metric("pca_k_chosen", len(ev))
-                            # One file per arm. Every PCA arm used to write the
-                            # same filename, so the seven of them overwrote each
-                            # other and the survivor was whichever finished last
-                            # - a classification arm, while the registered model
-                            # is a regression one. They differ for a real reason:
-                            # TargetEncoder is fitted on the label, so the matrix
-                            # reaching PCA is not the same for the two tasks.
-                            # register_winner writes the canonical file.
-                            ev_path = os.path.join(
-                                args.out_dir, f"pca_explained_variance__{run_name}.json")
-                            with open(ev_path, "w") as fh:
-                                json.dump(ev, fh)
-                            mlflow.log_artifact(ev_path)
+                    if use_pca:
+                        pca_stage = [s for s in final.stages
+                                     if hasattr(s, "explainedVariance")][0]
+                        ev = list(map(float, pca_stage.explainedVariance.toArray()))
+                        mlflow.log_metric("pca_variance_retained", float(sum(ev)))
+                        mlflow.log_metric("pca_k_chosen", len(ev))
+                        # One file per arm. Every PCA arm used to write the
+                        # same filename, so the seven of them overwrote each
+                        # other and the survivor was whichever finished last
+                        # - a classification arm, while the registered model
+                        # is a regression one. They differ for a real reason:
+                        # TargetEncoder is fitted on the label, so the matrix
+                        # reaching PCA is not the same for the two tasks.
+                        # register_winner writes the canonical file.
+                        ev_path = os.path.join(
+                            args.out_dir, f"pca_explained_variance__{run_name}.json")
+                        with open(ev_path, "w") as fh:
+                            json.dump(ev, fh)
+                        mlflow.log_artifact(ev_path)
 
-                        # Importance for every model (trees and linear alike,
-                        # PCA arms carried back to the original features), ROC and
-                        # PR curves for classifiers, residual plots for
-                        # regressors; all logged under the run's plots/.
-                        model_explain.explain_arm(
-                            final, train, preds, task=spec["task"], label=spec["label"],
-                            n_test=n_test, metrics=metrics, run_name=run_name,
-                            out_dir=args.out_dir)
+                    # Importance for every model (trees and linear alike,
+                    # PCA arms carried back to the original features), ROC and
+                    # PR curves for classifiers, residual plots for
+                    # regressors; all logged under the run's plots/.
+                    model_explain.explain_arm(
+                        final, train, preds, task=spec["task"], label=spec["label"],
+                        n_test=n_test, metrics=metrics, run_name=run_name,
+                        out_dir=args.out_dir)
 
-                        results[run_name] = dict(metrics, model=name, arm=arm,
-                                                 task=spec["task"], **{
-                                                     f"best_{k}": v
-                                                     for k, v in best_params.items()})
-                        print(f"  {arm:<5} " + "  ".join(
-                            f"{k}={v:.4f}" for k, v in metrics.items()))
+                    results[run_name] = dict(metrics, model=name, arm=arm,
+                                             task=spec["task"], **{
+                                                 f"best_{k}": v
+                                                 for k, v in best_params.items()})
+                    print(f"  {arm:<5} " + "  ".join(
+                        f"{k}={v:.4f}" for k, v in metrics.items()))
 
-                        mlflow.spark.log_model(final, artifact_path="pipeline_model")
-                except Exception as exc:  # noqa: BLE001
-                    # One arm failing must not cost the other thirteen. The
-                    # failure is recorded so the summary can report it, and the
-                    # arm can be retried on its own with --models later.
-                    failures[run_name] = f"{type(exc).__name__}: {exc}"
-                    print(f"  {arm:<5} FAILED - {type(exc).__name__}: {exc}")
-                    if args.fail_fast:
-                        raise
-                    if mlflow.active_run():
-                        mlflow.end_run(status="FAILED")
-                    checkpoint(results, failures, args.out_dir)
-                    continue
-
-                # Release what MaterializeCache persisted for this arm's fits.
-                # train/test/tune are cached separately and are untouched.
-                freed = custom_transformers.release_caches()
-                if freed:
-                    print(f"  {'':<5} released {freed} cached frame(s)")
-
+                    mlflow.spark.log_model(final, artifact_path="pipeline_model")
+            except Exception as exc:  # noqa: BLE001
+                # One arm failing must not cost the other thirteen. The
+                # failure is recorded so the summary can report it, and the
+                # arm can be retried on its own with --models later.
+                failures[run_name] = f"{type(exc).__name__}: {exc}"
+                print(f"  {arm:<5} FAILED - {type(exc).__name__}: {exc}")
+                if args.fail_fast:
+                    raise
+                if mlflow.active_run():
+                    mlflow.end_run(status="FAILED")
                 checkpoint(results, failures, args.out_dir)
+                continue
 
-        with open(os.path.join(args.out_dir, "tournament_results.json"), "w") as fh:
-            json.dump(results, fh, indent=2)
-        print(f"\nwrote {os.path.join(args.out_dir, 'tournament_results.json')}")
+            # Release what MaterializeCache persisted for this arm's fits.
+            # train/test/tune are cached separately and are untouched.
+            freed = custom_transformers.release_caches()
+            if freed:
+                print(f"  {'':<5} released {freed} cached frame(s)")
 
-        if args.no_register:
-            print("--no-register: Model Registry and models/ left untouched")
-        else:
-            register_winner(results, args)
-    finally:
-        spark.stop()
+            checkpoint(results, failures, args.out_dir)
+
+
+def _finish(results: dict, args) -> None:
+    with open(os.path.join(args.out_dir, "tournament_results.json"), "w") as fh:
+        json.dump(results, fh, indent=2)
+    print(f"\nwrote {os.path.join(args.out_dir, 'tournament_results.json')}")
+
+    if args.no_register:
+        print("--no-register: Model Registry and models/ left untouched")
+    else:
+        register_winner(results, args)
 
 
 def register_winner(results: dict, args) -> None:

@@ -20,8 +20,16 @@ TRACKING_URI = "sqlite:///" + os.path.join(REPO, "mlflow.db").replace("\\", "/")
 
 
 def build_spark(app_name: str, cores: str = "*", driver_memory: str = "10g",
-                shuffle_partitions: int = 64):
+                shuffle_partitions: int = 64, task_attempts: int = 4):
     """Return a configured local SparkSession.
+
+    ``task_attempts``: plain ``local[n]`` gives every task exactly one attempt,
+    so one crashed Python worker kills the whole job. That happens here, rarely
+    and not reproducibly, to the Arrow UDF workers under full load (seen in
+    scripts/feature_correlation.py: the same plan failed and passed on
+    consecutive runs). ``local[n,4]`` retries the task instead. The core count,
+    and so the read partitioning that randomSplit depends on, is unchanged;
+    scripts/check_split.py asserts it.
 
     ``driver_memory`` has to be applied *before* the JVM starts. In local
     mode ``.config("spark.driver.memory", ...)`` is silently ignored because
@@ -35,7 +43,7 @@ def build_spark(app_name: str, cores: str = "*", driver_memory: str = "10g",
 
     spark = (
         SparkSession.builder.appName(app_name)
-        .master(f"local[{cores}]")
+        .master(f"local[{cores},{task_attempts}]")
         # Arrow is what makes the pandas_udf stages run at C speed.
         .config("spark.sql.execution.arrow.pyspark.enabled", "true")
         .config("spark.sql.execution.arrow.maxRecordsPerBatch", "20000")
