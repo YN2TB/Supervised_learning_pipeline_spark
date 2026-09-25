@@ -273,6 +273,12 @@ FEATURE_SETS = {
     "predeparture_inbound_dep": dict(numeric=PREDEP_NUMERIC + ROT_SCHEDULE + ROT_INBOUND_DEP,
                                      encoder="frequency"),
     "predeparture_inbound": dict(numeric=PREDEP_NUMERIC + ROTATION_COLS, encoder="frequency"),
+    # The same without the near-duplicates: prev_dep_delay (r 0.93 with
+    # prev_arr_delay, which supersedes it once the inbound has landed) and
+    # has_prev (r 0.62 with leg_of_day, nearly "not the first leg").
+    "predeparture_inbound_lean": dict(
+        numeric=PREDEP_NUMERIC + ["leg_of_day", "turn_slack", "prev_arr_delay", "inbound_overrun"],
+        encoder="frequency"),
     # Scheduled congestion, alone and on top of the full rotation set.
     "predeparture_congestion": dict(numeric=PREDEP_NUMERIC + CONGESTION_COLS,
                                     encoder="frequency"),

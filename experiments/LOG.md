@@ -45,6 +45,50 @@ gaps as ties.
 - **Result:** paused before the arm; paused after CV with the checkpoint saved;
   resume printed "CV restored from checkpoint" and went straight to the refit.
 
+## 2026-09-25 · Why the wheels-off score is so high: the tail of DEPARTURE_DELAY
+
+- **Question (from review):** should extreme departure delays be cut, e.g. over ~2 h?
+- **Measured on all 5.7M curated flights:**
+  - Flights departing more than 120 min late are **2.0% of flights but 62% of the
+    target's total sum of squares** (> 60 min: 5.6% of flights, 77%). R² is mostly
+    decided by them, and for them arrival ≈ departure delay is obvious.
+  - A straight line on DEPARTURE_DELAY: R² 0.892 on all flights, **0.721 within
+    departure delay ≤ 120 min**.
+  - Time made up in the air does **not** grow for small delays: the median of
+    (arrival − departure delay) is −6 min in every 15-min band from on time to
+    300 min late; only the spread grows (sd 12 → 20). So the argument for cutting
+    is "the tail is trivial and dominates the score", not "long delays cannot be
+    recovered".
+- **Decided:** `--max-dep-delay N` scopes the wheels-off model (train and test
+  alike; legal because departure delay is known at wheels-off; refused for
+  pre-departure sets). One-line rule baselines (`rule_departure_delay_*`,
+  `rule_prev_arr_delay_*`) are logged whenever the set has that column, so a
+  model is judged by what it adds over the rule.
+- **Queued:** wheels-off at 1% within ≤ 120 min; leakage audit within ≤ 120 min.
+
+## 2026-09-25 · What the public Kaggle notebooks on this dataset report, and why it does not compare
+
+Read (not run) from kaggle.com/datasets/usdot/flight-delays/code, sorted by votes.
+
+- **"Predicting flight delays [Tutorial]"** (FabienDaniel, top voted), linear
+  regression with MSE ~50 to 54 (RMSE ~7). Not comparable with ours:
+  January 2015 only, one airline (American); each row is the **mean departure
+  delay of a group** (airport × departure hour), 1,831 rows in all, not one flight;
+  **delays over 1 h removed before averaging**; and the MSE ~54 is scored on the
+  training set, as the author notes. Its held-out test (last week of January) is
+  MSE 74.8, RMSE 8.65. Averaging removes most of the per-flight noise.
+  Worth borrowing: a pre-departure framing (airport and hour only), stating the
+  1 h cut openly, and reporting "share of predictions off by more than 15 min"
+  (4.6% there) next to RMSE.
+- **"Flight Delay: Prediction - 0.9983 Accuracy"**: a textbook leak. The target is
+  ARRIVAL_DELAY in four bands (15/30/60 min); the features keep the five
+  `*_DELAY` attribution columns, which by DOT definition sum to the arrival delay
+  for every flight ≥ 15 min late, and are null otherwise (filled with the mean,
+  so "is this the mean" alone tells which side of 15 min a flight is on). The
+  0.9983 is an AUC, not an accuracy. These are exactly the columns
+  `flight_schema.LEAKY_COLUMNS` removes at ingest. Useful as the contrast when
+  asked how a leak would look.
+
 ## 2026-09-25 · rot1-*: which feature sets are worth it? (1% sample, all 7 models)
 
 - **Question:** does the aircraft's previous leg help, and at which horizon? Does
