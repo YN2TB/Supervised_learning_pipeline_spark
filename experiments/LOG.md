@@ -271,6 +271,14 @@ Read (not run) from kaggle.com/datasets/usdot/flight-delays/code, sorted by vote
 | chris0andra/flight-delay-prediction (2015 data) | pre-departure only; time split (Dec test); ≥ 15 min | ROC-AUC 0.58–0.61, PR-AUC 0.20–0.25 | honest; matches our schedule-only set (~0.66 at > 30 min, random split) |
 | priyankatelukuntla/flight-delay-prediction-ml (newer BTS data) | pre-flight schedule only | R² 0.06 (LR) to 0.16 (XGBoost), RMSE ~38 | honest; same level as ours before the rotation features |
 
+On Kaggle itself (read in the browser, 2026-09-26):
+
+| notebook | inputs | reported | reading |
+|---|---|---|---|
+| rahulstephenites2 / Airline_Flight_DelayTime_Prediction | four `*_DELAY` attribution columns + SECURITY_DELAY, ELAPSED_TIME, AIR_TIME, TAXI_IN, TAXI_OUT, DEPARTURE_DELAY | random forest **R² 0.988 test**, MAE ~2.1 min; one feature holds 88% of importance | post-arrival columns and the attribution columns; the author calls it "too accurate" and suggests pruning DEPARTURE_DELAY |
+| manasichhibber / Flight Delay Predictions (178 votes) | the five attribution columns, DEPARTURE_DELAY | decision tree AUC 0.998 (4 delay bands) | the source the "0.9983 Accuracy" notebook copies |
+| erezalon / regression tree | departure delay of delayed flights only; airport "score" = mean delay over all data | (no clear R²) | target encoding without a split |
+
 R² ≥ 0.9 on this data comes with DEPARTURE_DELAY or a leak. Honest schedule-only work
 lands at R² ~0.1 / AUC ~0.6, as ours did; the rotation features (inbound aircraft
 delay) are what lift ours to R² 0.35 / AUC 0.85. Not like for like: a time split and a
