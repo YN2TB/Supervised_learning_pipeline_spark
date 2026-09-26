@@ -320,6 +320,13 @@ FEATURE_SETS.update({
                                       encoder="frequency"),
     "predeparture_final_nogain": dict(numeric=[c for c in _FINAL if c != "prev_air_gain"],
                                       encoder="frequency"),
+    # final without the two columns that showed no measurable contribution
+    # (log_distance, prev_air_gain; experiments/FEATURE_DECISIONS.md). The two
+    # removals were tested one at a time, not together: confirm at 1% before the
+    # next tournament.
+    "predeparture_v2": dict(numeric=[c for c in _FINAL
+                                     if c not in ("log_distance", "prev_air_gain")],
+                            encoder="frequency"),
     # The same without the near-duplicates: prev_dep_delay (r 0.93 with
     # prev_arr_delay, which supersedes it once the inbound has landed) and
     # has_prev (r 0.62 with leg_of_day, nearly "not the first leg").
@@ -336,8 +343,10 @@ FEATURE_SETS.update({
         numeric=PREDEP_NUMERIC + ROT_SCHEDULE + CONGESTION_COLS, encoder="frequency"),
 })
 # Chosen by the trials in experiments/LOG.md (2026-09-26): pre-departure,
-# aircraft rotation with prev_air_gain, no frequency encoder, no congestion.
-DEFAULT_FEATURE_SET = "predeparture_final"
+# aircraft rotation, no frequency encoder, no congestion, and without
+# log_distance and prev_air_gain. The tournament of 2026-09-26 ran
+# predeparture_final; v2 has not had a full run yet.
+DEFAULT_FEATURE_SET = "predeparture_v2"
 
 # Kept for the scripts that import it; it names the current feature set.
 NUMERIC_FEATURES = FEATURE_SETS[DEFAULT_FEATURE_SET]["numeric"]

@@ -37,6 +37,15 @@ Target and label: `label_delay` (arrival delay in minutes) for the regressors an
 (shifted by +88 for the log link); `label_severe` = arrival delay > 30 min for the
 classifiers, with balanced class weights. No feature is computed from either label.
 
+## Decided 2026-09-26: `predeparture_v2`
+
+The team dropped the two columns that showed no measurable contribution, log_distance
+and prev_air_gain (tests below). `predeparture_v2` is the new default: the kept rows
+above minus those two, 10 numeric columns + the four one-hot groups; prev_* on a first
+leg stays median-imputed (zero fill made no difference; `first_leg_zero=True` switches
+it). The two removals were tested one at a time, not together, so confirm v2 at 1%
+before the next tournament. The next tournament waits for the team's visual EDA review.
+
 ## Dropped
 
 | candidate | why | evidence |
@@ -45,6 +54,8 @@ classifiers, with balanced class weights. No feature is computed from either lab
 | te_origin, te_dest, te_route (target encoding) | built from the label | removed on review; the 0/1 label is the classification target only |
 | freq_origin, freq_dest, freq_route (frequency encoding) | adds nothing the coordinates do not | `nofreq` ties `predeparture`; `final` ties `inbound_gain` (≤ 0.005) |
 | prev_dep_delay | r 0.93 with prev_arr_delay | replaced by prev_air_gain; `inbound_gain` ties `inbound` |
+| prev_air_gain | no measurable contribution | `final_nogain` ties `final` (±0.009, no consistent direction) |
+| log_distance | no measurable contribution | `final_nodist` ties `final` (max −0.010) |
 | SCHED_DEP_MIN | r 0.998 with DEP_HOUR | |
 | SCHEDULED_TIME / log_sched_time | r 0.97–0.98 with distance | |
 | GC_DISTANCE_MI / log_gc_distance | r 1.00 with log_distance | also needed the Haversine Arrow UDF (~5x slower) |

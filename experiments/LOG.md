@@ -260,6 +260,14 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-26 · Decision: predeparture_v2
+
+Dropped log_distance and prev_air_gain (no measurable contribution); median imputation
+kept for first legs. `predeparture_v2` (10 numeric + 4 one-hot groups) is the new
+`DEFAULT_FEATURE_SET`. Pending: a 1% run confirming the two removals together, then the
+next full tournament, after the team's visual EDA review. The 2026-09-26 tournament
+results (predeparture_final) stay the current reference.
+
 ### 2026-09-26 00:5x · Queue stopped: system low on memory
 
 Claude Code stopped the Q2 shell while the machine was critically short of memory.
