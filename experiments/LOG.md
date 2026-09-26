@@ -231,6 +231,35 @@ One change at a time against `predeparture_inbound`:
   nor helps and costs 3–10x the time; the heavy tree arms need `--parallelism` ≤ 2
   and the bounded MaterializeCache on a 10 GB heap.
 
+### 2026-09-26 afternoon · The three anomaly tests from FEATURE_DECISIONS.md (1%)
+
+One change each against `predeparture_final` (differences from final, test split of
+the 1% sample):
+
+| model | final | zero-fill first legs | no log_distance | no prev_air_gain |
+|---|---|---|---|---|
+| GBT classifier AUC | 0.834 | −0.001 | −0.001 | +0.003 |
+| RF classifier AUC | 0.830 | +0.004 | +0.000 | +0.004 |
+| LinearSVC AUC | 0.799 | +0.000 | +0.000 | −0.000 |
+| GBT regressor R² | 0.312 | −0.003 | −0.010 | −0.000 |
+| RF regressor R² | 0.316 | −0.001 | −0.002 | −0.005 |
+| LinearRegression R² | 0.266 | +0.000 | −0.000 | −0.001 |
+| GLM Poisson R² | 0.200 | +0.001 | −0.000 | −0.009 |
+
+- **Zero fill of prev_* on first legs:** metrics unchanged. The has_prev coefficient
+  shrinks by ~20% (LinearRegression −5.17 → −4.12) but stays negative in every linear
+  model: has_prev acts as the intercept of the flights that have an inbound, offsetting
+  the average the prev_* terms add for them (e.g. prev_air_gain averages about −5 min).
+  Its sign is not readable alone; the marginal one (first legs less delayed) is.
+- **log_distance:** no measurable contribution (largest change −0.010 on one model).
+- **prev_air_gain:** no measurable contribution, and no consistent direction
+  (classifiers slightly better without it). The recovery credited to it on
+  2026-09-26 02:20 came from has_prev, restored in the same step.
+- **Not yet decided (user's call):** a leaner final without log_distance and
+  prev_air_gain, zero-filled; the two removals have not been tested together.
+- The run was stopped by Claude Code for low memory after the first two sets; the
+  orphaned process finished the third on its own (memory had recovered to ~6 GB).
+
 ### 2026-09-26 00:5x · Queue stopped: system low on memory
 
 Claude Code stopped the Q2 shell while the machine was critically short of memory.

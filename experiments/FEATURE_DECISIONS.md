@@ -89,6 +89,14 @@ classifiers, with balanced class weights. No feature is computed from either lab
    of day from SCHED_ARR_MIN (one split instead of 24 slots); the linear models need the
    one-hot to bend. Both read the same effect.
 
-Tests proposed for anomalies 1, 3 and 4 (not run, 2026-09-26): first-leg prev_* filled
-with 0; `final` without log_distance; `final` without prev_air_gain. Each is one 1%
-ablation run (~10 min).
+### Tested (2026-09-26 afternoon, 1%, one change each; see LOG.md)
+
+- **Anomaly 1, zero fill:** no metric change; the has_prev coefficient shrinks ~20% and
+  stays negative. Revised explanation: has_prev is the intercept of the flights that have
+  an inbound, offsetting the average contribution of the prev_* terms for them. Not a
+  standalone effect; the marginal sign is the readable one.
+- **Anomaly 3, log_distance:** removing it changes nothing measurable (max −0.010).
+- **Anomaly 4, prev_air_gain:** removing it changes nothing measurable, in no consistent
+  direction. The earlier recovery was has_prev's.
+- **Open:** drop both (the tie rule says so) and zero-fill; the two removals were not
+  tested together.
