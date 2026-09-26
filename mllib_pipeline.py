@@ -243,7 +243,7 @@ def congestion_tables(spark):
     return origin_hour, dest_hour, origin_day
 
 
-def add_context_features(spark, full_df, frame, numeric):
+def add_context_features(spark, full_df, frame, numeric, first_leg_zero: bool = False):
     """Join the row-external features a feature set needs onto ``frame``.
 
     Both kinds look at OTHER flights (the aircraft's previous leg, the airport's
@@ -263,6 +263,16 @@ def add_context_features(spark, full_df, frame, numeric):
                  .join(dest_hour, ["DESTINATION_AIRPORT", "MONTH", "DAY", "_arr_hour"], "left")
                  .join(origin_day, ["ORIGIN_AIRPORT", "MONTH", "DAY"], "left")
                  .drop("_arr_hour"))
+    if first_leg_zero:
+        # A first leg of the day has no inbound aircraft, so no inbound delay,
+        # no time made up in the air and nothing to overrun: 0 is the true
+        # value, not a missing one. Left null, the Imputer puts the training
+        # median there and has_prev has to undo it (its coefficient turned
+        # negative against a positive correlation). turn_slack stays null (no
+        # ground time is defined) and is imputed.
+        zero = [c for c in ("prev_arr_delay", "prev_air_gain", "inbound_overrun") if c in need]
+        if zero:
+            frame = frame.fillna(0.0, subset=zero)
     if joined:
         # A join leaves spark.sql.shuffle.partitions (64) partitions where the
         # read had one per core (16). Every later job then runs 4x the tasks,
@@ -299,6 +309,17 @@ FEATURE_SETS = {
         numeric=[c for c in PREDEP_NUMERIC if c not in FREQ_ENC_OUT]
         + ROT_SCHEDULE + ["prev_arr_delay", "prev_air_gain", "inbound_overrun"],
         encoder="frequency"),
+}
+# One change each against predeparture_final (experiments/FEATURE_DECISIONS.md,
+# anomalies 1, 3 and 4).
+_FINAL = FEATURE_SETS["predeparture_final"]["numeric"]
+FEATURE_SETS.update({
+    "predeparture_final_zero": dict(numeric=list(_FINAL), encoder="frequency",
+                                    first_leg_zero=True),
+    "predeparture_final_nodist": dict(numeric=[c for c in _FINAL if c != "log_distance"],
+                                      encoder="frequency"),
+    "predeparture_final_nogain": dict(numeric=[c for c in _FINAL if c != "prev_air_gain"],
+                                      encoder="frequency"),
     # The same without the near-duplicates: prev_dep_delay (r 0.93 with
     # prev_arr_delay, which supersedes it once the inbound has landed) and
     # has_prev (r 0.62 with leg_of_day, nearly "not the first leg").
@@ -313,7 +334,7 @@ FEATURE_SETS = {
         encoder="frequency"),
     "predeparture_sched_congestion": dict(
         numeric=PREDEP_NUMERIC + ROT_SCHEDULE + CONGESTION_COLS, encoder="frequency"),
-}
+})
 # Chosen by the trials in experiments/LOG.md (2026-09-26): pre-departure,
 # aircraft rotation with prev_air_gain, no frequency encoder, no congestion.
 DEFAULT_FEATURE_SET = "predeparture_final"
@@ -953,8 +974,9 @@ def main() -> None:
         # Rotation and congestion lookups, joined after the split so the rows in
         # each half do not move. A no-op for feature sets that use neither.
         numeric = FEATURE_SETS[args.feature_set]["numeric"]
-        train = add_context_features(spark, df, train, numeric)
-        test = add_context_features(spark, df, test, numeric)
+        zero = FEATURE_SETS[args.feature_set].get("first_leg_zero", False)
+        train = add_context_features(spark, df, train, numeric, zero)
+        test = add_context_features(spark, df, test, numeric, zero)
         if args.max_dep_delay is not None:
             if "DEPARTURE_DELAY" not in numeric:
                 raise SystemExit("--max-dep-delay needs a feature set that knows the "
