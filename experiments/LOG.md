@@ -262,6 +262,20 @@ Read (not run) from kaggle.com/datasets/usdot/flight-delays/code, sorted by vote
   `flight_schema.LEAKY_COLUMNS` removes at ingest. Useful as the contrast when
   asked how a leak would look.
 
+### 2026-09-26 · Who else reports R² as high as the old model, and why (GitHub READMEs)
+
+| project | inputs | reported | reading |
+|---|---|---|---|
+| pranaykmr/FlightDelayPrediction | DEPARTURE_DELAY, ELAPSED_TIME, AIR_TIME, TAXI_IN, ARRIVAL_TIME, ARRIVAL_DELAY itself | R² ~0.9, MAE 1.5e−14, classification 1.0 | the target is among the features; without DEPARTURE_DELAY their R² goes negative |
+| akasha456/Flight-Delay-Detection | NAS_Delay + Dep_Delay | R² 0.972, accuracy 98% | NAS delay is one of the attribution columns that sum to the target |
+| chris0andra/flight-delay-prediction (2015 data) | pre-departure only; time split (Dec test); ≥ 15 min | ROC-AUC 0.58–0.61, PR-AUC 0.20–0.25 | honest; matches our schedule-only set (~0.66 at > 30 min, random split) |
+| priyankatelukuntla/flight-delay-prediction-ml (newer BTS data) | pre-flight schedule only | R² 0.06 (LR) to 0.16 (XGBoost), RMSE ~38 | honest; same level as ours before the rotation features |
+
+R² ≥ 0.9 on this data comes with DEPARTURE_DELAY or a leak. Honest schedule-only work
+lands at R² ~0.1 / AUC ~0.6, as ours did; the rotation features (inbound aircraft
+delay) are what lift ours to R² 0.35 / AUC 0.85. Not like for like: a time split and a
+15-min threshold are both harder (our temporal audit costs ~0.03).
+
 ## 2026-09-25 · rot1-*: which feature sets are worth it? (1% sample, all 7 models)
 
 - **Question:** does the aircraft's previous leg help, and at which horizon? Does
