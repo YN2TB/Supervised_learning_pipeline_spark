@@ -212,6 +212,25 @@ One change at a time against `predeparture_inbound`:
   beats the one-line rule except the log-link GLM; the no-PCA arm wins every pair so
   far; PCA at 90% EVR kept k = 53.
 
+- **Tree PCA arms (06:02–07:57):** RF regressor pca R² 0.287 (CV restored from the
+  first attempt's checkpoint); GBT regressor pca R² 0.300; GBT classifier pca AUC
+  0.817, AUC-PR 0.578. **RF classifier pca did not finish:** cross-validation
+  completed (chose depth 10 × 80 trees, CV AUC 0.799, saved in
+  `cv_checkpoints/random_forest_classifier__pca.json`), and the refit on 4.56M rows ×
+  53 dense components ran the 10 GB heap out of memory again, even one fit at a time.
+  Not retried: its CV score already places it below the no-PCA arm (0.839).
+- **Final: 13 of 14 arms.** Best regressor GBT no-PCA (R² 0.349, RMSE 31.8, MAE
+  15.4); best classifier GBT no-PCA (AUC 0.849, AUC-PR 0.645). The no-PCA arm wins
+  all six complete pairs. Importance in every model is led by `inbound_overrun` and
+  `prev_arr_delay`, then SCHED_ARR_MIN / turn_slack / leg_of_day / has_prev.
+  Figures, `results_table.md` and `comparison_table.md` (against the wheels-off run)
+  are in `docs/benchmarks/flight-delay-predeparture/`; `tournament_results.json`
+  rebuilt from MLflow (each resume had overwritten it with its own arms only).
+- **Registry untouched** (v4, wheels-off, still Production).
+- **Lessons:** PCA to 90% EVR here keeps 53 of ~67 slots, so it neither compresses
+  nor helps and costs 3–10x the time; the heavy tree arms need `--parallelism` ≤ 2
+  and the bounded MaterializeCache on a 10 GB heap.
+
 ### 2026-09-26 00:5x · Queue stopped: system low on memory
 
 Claude Code stopped the Q2 shell while the machine was critically short of memory.
