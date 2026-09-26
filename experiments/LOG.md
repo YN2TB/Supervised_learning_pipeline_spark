@@ -260,6 +260,27 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-26 · Open idea (not implemented): PCA on the numeric columns only
+
+The PCA arm currently rotates the whole assembled vector, one-hot slots included. PCA
+suits correlated continuous columns, not one-hot indicators (nearly independent, and a
+0/1 column's variance has no geometric meaning), and projecting them turns a sparse
+vector (~18 stored values per flight) into a dense one (53), which is what ran the heap
+out in the tree PCA arms. Alternative: scale and PCA only the 10 numeric columns of
+`predeparture_v2`, keep the one-hot groups as they are, assemble after.
+
+- For it: the right tool for the right columns; no densification; decorrelated inputs
+  remove the linear-model sign puzzles (has_prev, the longitude pair); real correlation
+  to fold (prev_arr_delay ~ inbound_overrun 0.66, leg_of_day ~ has_prev 0.62, the
+  longitudes 0.59, SCHED_ARR_MIN ~ leg_of_day 0.55).
+- Against: small reduction (an estimate of ~7–8 of 10 components for 90%, not
+  measured; ~67 → ~64 overall); components mix delays with coordinates and lose the
+  interpretability the review asked for; trees split on axes, and rotating
+  inbound_overrun's threshold into several components works against them.
+- **Decision (user):** keep the current PCA arm as the default; treat numeric-only PCA
+  as a separate direction to compare side by side (e.g. an opt-in `--pca-scope numeric`),
+  not a replacement. Nothing built or run yet.
+
 ### 2026-09-26 · Decision: predeparture_v2
 
 Dropped log_distance and prev_air_gain (no measurable contribution); median imputation
