@@ -260,6 +260,32 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-27 · Kaggle B: PCA on the whole vector against PCA on the numeric columns only (1%)
+
+Private kernel `buihuynhgiahuy/flight-delay-exp-pca`; output in
+`experiments/kaggle-pca-20260927/results/`. Same Kaggle split as run A (the `v2` rows
+match A's to four decimals). 90% explained variance: the whole vector needs k = 51;
+the 10 numeric columns need k = 8 (93%), as estimated.
+
+| model | no PCA | PCA whole vector (k 51) | PCA numeric only (k 8) |
+|---|---|---|---|
+| GBT regressor R² | **0.280** | 0.228 | 0.267 |
+| RF regressor R² | **0.282** | 0.236 | 0.263 |
+| LinearRegression R² | 0.2455 | 0.238 | 0.2452 |
+| GLM Poisson R² | **0.166** | 0.157 | 0.153 |
+| GBT classifier AUC / PR | **0.832 / 0.634** | 0.796 / 0.569 | 0.817 / 0.594 |
+| RF classifier AUC / PR | **0.829 / 0.618** | 0.787 / 0.546 | 0.796 / 0.576 |
+| LinearSVC AUC / PR | 0.802 / 0.553 | 0.784 / 0.555 | **0.807 / 0.568** |
+
+- Numeric-only PCA beats whole-vector PCA on six of seven models (+0.01 to +0.04), brings
+  LinearRegression back to the no-PCA level, and runs lighter.
+- For LinearSVC it beats no PCA too (+0.005 AUC, +0.015 AUC-PR): orthogonal inputs stop
+  correlated columns offsetting each other.
+- The trees still do best without PCA: rotation blurs the axis-aligned thresholds they
+  split on (inbound_overrun's hinge).
+- **Reading:** if the brief's PCA arm stays, numeric-only is the PCA arm to keep; the
+  no-PCA arm remains the main one. Adoption is the team's call.
+
 ### 2026-09-27 · Kaggle A: cyclical encoding against one-hot (1%, kg-v2 vs kg-v2_cyclic)
 
 First run of `kaggle/run_experiments.ipynb` as private kernel
