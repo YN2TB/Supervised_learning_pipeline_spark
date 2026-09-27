@@ -260,6 +260,28 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-28 · Kaggle C: airport coordinates and ROUTE_DETOUR (1%)
+
+Private kernel `buihuynhgiahuy/flight-delay-exp-coords-detour`; output in
+`experiments/kaggle-coords-detour-20260928/results/`. Same Kaggle split as A and B
+(the `v2` rows match to four decimals).
+
+| model | v2 | without coordinates | with ROUTE_DETOUR |
+|---|---|---|---|
+| RF classifier AUC | 0.829 | 0.819 (−0.009) | 0.825 (−0.004) |
+| GBT classifier AUC | 0.832 | 0.827 (−0.005) | 0.830 (−0.001) |
+| RF regressor R² | 0.282 | 0.278 (−0.005) | 0.282 (0.000) |
+| GBT regressor R² | 0.280 | 0.280 (0.000) | 0.279 (−0.001) |
+| LinearRegression, LinearSVC, GLM | | ≈ 0 | identical |
+
+- LinearRegression is identical to four decimals in all three: CV picked
+  elasticNetParam 0.5, and the lasso half set ROUTE_DETOUR's coefficient to exactly 0;
+  the coordinates keep small coefficients (longitudes −0.41 / +0.89) whose removal moves
+  R² only in the fifth decimal.
+- **Coordinates: keep.** The trees lose a little without them, all in the same direction
+  (RF classifier −0.009 AUC): it is the airport identity the trees split on.
+- **ROUTE_DETOUR: stays out.** The lasso drops it and the trees do not improve.
+
 ### 2026-09-27 · Kaggle B: PCA on the whole vector against PCA on the numeric columns only (1%)
 
 Private kernel `buihuynhgiahuy/flight-delay-exp-pca`; output in
