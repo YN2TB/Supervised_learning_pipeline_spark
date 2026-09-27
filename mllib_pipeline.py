@@ -310,6 +310,21 @@ FEATURE_SETS = {
         + ROT_SCHEDULE + ["prev_arr_delay", "prev_air_gain", "inbound_overrun"],
         encoder="frequency"),
 }
+# Cyclical encoding (experiments/LOG.md, 2026-09-27): hour as one sin/cos pair
+# over the day (from SCHED_DEP_MIN, so minutes count, not just the hour), month as
+# two pairs (one pair cannot hold its two peaks: Feb and Jun-Jul). Weekday stays
+# one-hot: it has no smooth cycle, and two pairs would be 5 parameters for 7 levels.
+CYCLIC_COLS = ["hour_sin", "hour_cos", "month_sin1", "month_cos1", "month_sin2", "month_cos2"]
+CYCLIC_SQL = (
+    "SELECT *, "
+    "SIN(2 * PI() * SCHED_DEP_MIN / 1440.0) AS hour_sin, "
+    "COS(2 * PI() * SCHED_DEP_MIN / 1440.0) AS hour_cos, "
+    "SIN(2 * PI() * (MONTH - 1) / 12.0) AS month_sin1, "
+    "COS(2 * PI() * (MONTH - 1) / 12.0) AS month_cos1, "
+    "SIN(4 * PI() * (MONTH - 1) / 12.0) AS month_sin2, "
+    "COS(4 * PI() * (MONTH - 1) / 12.0) AS month_cos2 "
+    "FROM __THIS__")
+
 # One change each against predeparture_final (experiments/FEATURE_DECISIONS.md,
 # anomalies 1, 3 and 4).
 _FINAL = FEATURE_SETS["predeparture_final"]["numeric"]
@@ -327,6 +342,11 @@ FEATURE_SETS.update({
     "predeparture_v2": dict(numeric=[c for c in _FINAL
                                      if c not in ("log_distance", "prev_air_gain")],
                             encoder="frequency"),
+    # v2 with hour and month cyclical instead of one-hot (an alternative to compare,
+    # not a replacement).
+    "predeparture_v2_cyclic": dict(numeric=[c for c in _FINAL
+                                            if c not in ("log_distance", "prev_air_gain")],
+                                   encoder="frequency", cyclic=True),
     # The same without the near-duplicates: prev_dep_delay (r 0.93 with
     # prev_arr_delay, which supersedes it once the inbound has landed) and
     # has_prev (r 0.62 with leg_of_day, nearly "not the first leg").
@@ -383,7 +403,8 @@ def _predeparture_stages(numeric: list) -> list:
 def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
                          svd_mode: str = "local-eigs",
                          feature_set: str = DEFAULT_FEATURE_SET,
-                         pca_variance: float = 0.0):
+                         pca_variance: float = 0.0,
+                         pca_scope: str = "all"):
     """Shared preprocessing. Returns (stages, assembler_input_names)."""
     # svd_mode must stay in step with the --svd-mode CLI default. They disagreed
     # once, and the only caller that omits the argument is
@@ -410,9 +431,15 @@ def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
                                     labelCol=label_col, smoothing=20.0))
 
     # AIRLINE is a string; the rest are already small integer codes.
+    onehot_numeric = list(ONEHOT_NUMERIC)
+    if spec.get("cyclic"):
+        stages.append(SQLTransformer(statement=CYCLIC_SQL))
+        numeric += CYCLIC_COLS
+        onehot_numeric = [c for c in onehot_numeric if c not in ("MONTH", "DEP_HOUR")]
+
     stages.append(StringIndexer(inputCol="AIRLINE", outputCol="airline_idx",
                                 handleInvalid="keep"))
-    ohe_in = ["airline_idx"] + ONEHOT_NUMERIC
+    ohe_in = ["airline_idx"] + onehot_numeric
     ohe_out = [f"{c}_ohe" for c in ohe_in]
     stages.append(OneHotEncoder(inputCols=ohe_in, outputCols=ohe_out,
                                 handleInvalid="keep", dropLast=True))
@@ -424,6 +451,33 @@ def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
     assembler_inputs = numeric + ohe_out
     if spec["encoder"] == "frequency":
         assert not set(assembler_inputs) & set(PRE_DEPARTURE_FORBIDDEN), assembler_inputs
+
+    if use_pca and pca_scope == "numeric":
+        # PCA on the numeric columns only (experiments/LOG.md, 2026-09-26): the
+        # one-hot groups are not continuous and projecting them turns a sparse
+        # vector dense. Numeric block: assemble, scale, drop dead slots, rotate;
+        # then join the rotated block with the one-hot vectors and continue as the
+        # no-PCA arm does. An alternative to compare, not the default.
+        stages.append(VectorAssembler(inputCols=numeric, outputCol="num_raw",
+                                      handleInvalid="keep"))
+        stages.append(StandardScaler(inputCol="num_raw", outputCol="num_scaled",
+                                     withMean=False, withStd=True))
+        stages.append(VarianceThresholdSelector(featuresCol="num_scaled",
+                                                outputCol="num_selected",
+                                                varianceThreshold=0.0))
+        stages.append(RowMatrixPCA(k=min(pca_k, max(1, len(numeric) - 1)), svdMode=svd_mode,
+                                   varianceThreshold=pca_variance,
+                                   inputCol="num_selected", outputCol="num_pca"))
+        stages.append(VectorAssembler(inputCols=["num_pca"] + ohe_out,
+                                      outputCol="features_raw", handleInvalid="keep"))
+        stages.append(StandardScaler(inputCol="features_raw", outputCol="features_scaled",
+                                     withMean=False, withStd=True))
+        stages.append(VarianceThresholdSelector(
+            featuresCol="features_scaled", outputCol="features_selected",
+            varianceThreshold=0.0))
+        stages.append(SQLTransformer(
+            statement="SELECT *, features_selected AS features FROM __THIS__"))
+        return stages, assembler_inputs
     stages.append(VectorAssembler(inputCols=assembler_inputs,
                                   outputCol="features_raw", handleInvalid="keep"))
 
@@ -750,6 +804,7 @@ def cv_checkpoint_key(args) -> dict:
     return {"feature_set": args.feature_set, "sample_fraction": args.sample_fraction,
             "tune_fraction": args.tune_fraction, "folds": args.folds,
             "pca_variance": args.pca_variance, "pca_k": args.pca_k,
+            "pca_scope": args.pca_scope,
             "class_weight": args.class_weight, "experiment": args.experiment}
 
 
@@ -864,6 +919,9 @@ def main() -> None:
     ap.add_argument("--pca-variance", type=float, default=0.90,
                     help="PCA arms keep the fewest components reaching this share of "
                          "the variance. Ignored when --pca-k is given.")
+    ap.add_argument("--pca-scope", default="all", choices=["all", "numeric"],
+                    help="PCA arms: rotate the whole vector (default) or only the "
+                         "numeric columns, keeping the one-hot groups as they are")
     ap.add_argument("--pca-k", type=int, default=None,
                     help="fixed number of PCA components (overrides --pca-variance)")
     ap.add_argument("--svd-mode", default="local-eigs",
@@ -1093,7 +1151,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
 
                 stages, feature_names = build_feature_stages(
                     spec["label"], use_pca, args.pca_k, args.svd_mode,
-                    args.feature_set, args.pca_variance)
+                    args.feature_set, args.pca_variance, args.pca_scope)
                 pipeline = Pipeline(stages=stages + [spec["estimator"]])
                 evals = evaluators(spec["task"], spec["label"])
                 primary = "rmse" if spec["task"] == "regression" else "areaUnderROC"
@@ -1120,6 +1178,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                         "pca_k": (args.pca_k if not args.pca_variance else "auto")
                                  if use_pca else 0,
                         "pca_variance_target": args.pca_variance if use_pca else 0,
+                    "pca_scope": args.pca_scope if use_pca else "",
                         "svd_mode": args.svd_mode if use_pca else "",
                         "tune_rows": n_tune, "train_rows": n_train,
                         "test_rows": n_test, "grid_size": len(spec["grid"]),
@@ -1162,7 +1221,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                              for k, v in best_params.items()})
                         stages2, _ = build_feature_stages(
                             spec["label"], use_pca, args.pca_k, args.svd_mode,
-                            args.feature_set, args.pca_variance)
+                            args.feature_set, args.pca_variance, args.pca_scope)
                         final = Pipeline(stages=stages2 + [best_est]).fit(train)
 
                     preds = final.transform(test)

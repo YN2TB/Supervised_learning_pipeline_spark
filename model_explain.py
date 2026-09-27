@@ -79,16 +79,22 @@ def _dump(obj, out_dir, name, logged):
 # ---------------------------------------------------------------------------
 # Importance
 # ---------------------------------------------------------------------------
-def slot_names(fitted_model, sample_df) -> list[str]:
-    """Names of the slots in features_selected (before any PCA)."""
+def _names(fitted_model, sample_df, col: str, selector_out: str) -> list[str]:
+    """Slot names of assembled vector `col`, after the selector writing `selector_out`."""
     out = fitted_model.transform(sample_df.limit(5))
-    meta = out.schema["features_raw"].metadata.get("ml_attr", {})
+    meta = out.schema[col].metadata.get("ml_attr", {})
     names = [""] * int(meta.get("num_attrs", 0))
     for group in meta.get("attrs", {}).values():
         for attr in group:
             names[attr["idx"]] = attr.get("name", f"f{attr['idx']}")
-    selector = next((s for s in fitted_model.stages if hasattr(s, "selectedFeatures")), None)
+    selector = next((s for s in fitted_model.stages if hasattr(s, "selectedFeatures")
+                     and s.getOutputCol() == selector_out), None)
     return [names[i] for i in selector.selectedFeatures] if selector else names
+
+
+def slot_names(fitted_model, sample_df) -> list[str]:
+    """Names of the slots in features_selected."""
+    return _names(fitted_model, sample_df, "features_raw", "features_selected")
 
 
 def importance(fitted_model, sample_df) -> dict:
@@ -115,7 +121,7 @@ def importance(fitted_model, sample_df) -> dict:
     else:
         raise ValueError(f"{type(est).__name__} has neither importances nor coefficients")
 
-    if pca is not None:
+    if pca is not None and pca.getInputCol() == "features_selected":
         V = pca.pc.toArray()                       # n_features x k
         if signed:
             w = V @ w
@@ -123,6 +129,21 @@ def importance(fitted_model, sample_df) -> dict:
         else:
             w = (V ** 2) @ w
             kind += ", spread over features by squared PCA loadings (approximate)"
+    elif pca is not None:
+        # Numeric-only PCA (--pca-scope numeric): the vector is [PCs of the numeric
+        # block, one-hot slots]. Carry the PC part back onto the numeric columns and
+        # keep the one-hot part as it is. The PCs were rescaled once more after the
+        # rotation, so for linear models this is approximate as well.
+        num_names = _names(fitted_model, sample_df, "num_raw",
+                           selector_out=pca.getInputCol())
+        pc_idx = [i for i, n in enumerate(names) if n.startswith(pca.getOutputCol())]
+        rest = [i for i in range(len(names)) if i not in set(pc_idx)]
+        V = pca.pc.toArray()                       # numeric slots x k
+        w_pc = np.asarray(w)[pc_idx]
+        mapped = (V @ w_pc) if signed else ((V ** 2) @ w_pc)
+        names = list(num_names) + [names[i] for i in rest]
+        w = np.concatenate([mapped, np.asarray(w)[rest]])
+        kind += ", numeric block carried back through its PCA loadings (approximate)"
     if len(names) != len(w):
         names = [f"f{i}" for i in range(len(w))]
     return {"kind": kind, "features": names, "importances": [float(x) for x in w],
