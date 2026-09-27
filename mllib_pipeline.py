@@ -342,6 +342,22 @@ FEATURE_SETS.update({
     "predeparture_v2": dict(numeric=[c for c in _FINAL
                                      if c not in ("log_distance", "prev_air_gain")],
                             encoder="frequency"),
+    # One change each against v2 (Kaggle ablation, 2026-09-27): without the airport
+    # coordinates, without the weekday one-hot, without the month one-hot, and with
+    # ROUTE_DETOUR added back (it needs the Haversine UDF, added automatically).
+    "predeparture_v2_nocoords": dict(
+        numeric=[c for c in _FINAL if c not in ("log_distance", "prev_air_gain", "ORIGIN_LAT",
+                                                 "ORIGIN_LON", "DEST_LAT", "DEST_LON")],
+        encoder="frequency"),
+    "predeparture_v2_nodow": dict(
+        numeric=[c for c in _FINAL if c not in ("log_distance", "prev_air_gain")],
+        encoder="frequency", onehot=["MONTH", "DEP_HOUR"]),
+    "predeparture_v2_nomonth": dict(
+        numeric=[c for c in _FINAL if c not in ("log_distance", "prev_air_gain")],
+        encoder="frequency", onehot=["DAY_OF_WEEK", "DEP_HOUR"]),
+    "predeparture_v2_detour": dict(
+        numeric=[c for c in _FINAL if c not in ("log_distance", "prev_air_gain")] + ["ROUTE_DETOUR"],
+        encoder="frequency"),
     # v2 with hour and month cyclical instead of one-hot (an alternative to compare,
     # not a replacement).
     "predeparture_v2_cyclic": dict(numeric=[c for c in _FINAL
@@ -433,7 +449,7 @@ def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
                                     labelCol=label_col, smoothing=20.0))
 
     # AIRLINE is a string; the rest are already small integer codes.
-    onehot_numeric = list(ONEHOT_NUMERIC)
+    onehot_numeric = list(spec.get("onehot", ONEHOT_NUMERIC))
     if spec.get("cyclic"):
         stages.append(SQLTransformer(statement=CYCLIC_SQL))
         numeric += CYCLIC_COLS
