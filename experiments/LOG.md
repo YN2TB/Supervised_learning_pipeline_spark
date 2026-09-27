@@ -260,6 +260,30 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-27 · Kaggle A: cyclical encoding against one-hot (1%, kg-v2 vs kg-v2_cyclic)
+
+First run of `kaggle/run_experiments.ipynb` as private kernel
+`buihuynhgiahuy/flight-delay-exp-cyclic` (commit from `origin/test`), worked end to end
+(setup, curated rebuild, 14 arms, results). Output in
+`experiments/kaggle-cyclic-20260927/results/` (summary.csv, mlflow.db, plots, logs).
+Kaggle's split differs from the laptop's (4 cores), so only the two rows of this run
+compare: baseline RMSE 42.0 here against 39.8 at home.
+
+| model | v2 (one-hot) | v2_cyclic | diff |
+|---|---|---|---|
+| GBT classifier AUC | 0.832 | 0.834 | +0.002 |
+| RF classifier AUC | 0.829 | 0.828 | −0.001 |
+| LinearSVC AUC | 0.802 | 0.803 | +0.002 |
+| RF regressor R² | 0.282 | 0.285 | +0.003 |
+| GBT regressor R² | 0.280 | 0.280 | 0.000 |
+| LinearRegression R² | 0.245 | 0.244 | −0.001 |
+| GLM Poisson R² | 0.166 | 0.166 | 0.000 |
+
+A tie on every model (≤ 0.005), including the linear ones that were expected to lose
+the one-hot's flexibility: one sin/cos pair for hour and two for month carry what 35
+one-hot slots did. By the tie rule the cyclical version is the simpler one (6 dense
+columns, a readable "evening peak"); adopting it is the team's call.
+
 ### 2026-09-27 · Open idea (not implemented): cyclical encoding of hour, month, weekday
 
 Hour, month and weekday are one-hot (43 sparse slots). They are cyclical, which one-hot
