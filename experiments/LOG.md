@@ -260,6 +260,27 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-27 · Open idea (not implemented): cyclical encoding of hour, month, weekday
+
+Hour, month and weekday are one-hot (43 sparse slots). They are cyclical, which one-hot
+ignores (23h is not next to 0h), but one-hot can take any shape, while a sin/cos pair
+assumes one smooth wave per cycle. Checked against the EDA severe-delay rates
+(unweighted by flight count; numpy only, nothing run):
+
+| variable | 1 sin/cos pair explains | 2 pairs | shape |
+|---|---|---|---|
+| hour (24) | 82.7% | 83.7% | one wave, low morning, peak ~20h; misses the 4h → 5h cliff (11.6% → 3.5%, the first departures of the day) |
+| month (12) | 25.8% | 91.0% | two peaks (Feb, Jun–Jul) and a Sep–Oct trough; one pair puts the peak in April, which is actually a trough (9.5%) |
+| weekday (7) | 15.6% | 97.9% | no smooth cycle; two pairs is 5 parameters for 7 levels |
+
+- Suggested variant: hour as 1 pair (2 columns for 23), month as 2 pairs (4 for 11),
+  weekday kept one-hot. Expected: trees unchanged (they take time of day from
+  SCHED_ARR_MIN, and would prefer a plain integer hour); linear models possibly a little
+  worse (one-hot fits the full shape, and 4.5M rows are plenty for 43 coefficients).
+  The gains are compactness (43 sparse → ~6 dense), a readable effect ("delays peak in
+  the evening") and a natural fit for the numeric-only PCA idea below.
+- **Decision (user's approach):** a separate variant to compare at 1%, not a replacement.
+
 ### 2026-09-26 · Open idea (not implemented): PCA on the numeric columns only
 
 The PCA arm currently rotates the whole assembled vector, one-hot slots included. PCA
