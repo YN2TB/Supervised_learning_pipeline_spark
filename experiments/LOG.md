@@ -260,6 +260,31 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-28 · Kaggle D: weekday and month one-hot (1%)
+
+Private kernel `buihuynhgiahuy/flight-delay-exp-dow-month`; output in
+`experiments/kaggle-dow-month-20260928/results/`. Same Kaggle split as A to C.
+
+| model | v2 | without weekday | without month |
+|---|---|---|---|
+| GBT classifier AUC | 0.832 | 0.831 (−0.000) | 0.829 (−0.003) |
+| RF classifier AUC | 0.829 | 0.826 (−0.002) | 0.827 (−0.002) |
+| LinearSVC AUC | 0.802 | 0.802 (−0.000) | 0.799 (−0.003) |
+| GBT regressor R² | 0.280 | 0.262 (−0.018, see below) | 0.279 (−0.002) |
+| RF regressor R² | 0.282 | 0.282 (0.000) | 0.281 (−0.001) |
+| LinearRegression R² | 0.2455 | 0.2449 (−0.001) | 0.2444 (−0.001) |
+| GLM Poisson R² | 0.166 | 0.166 (−0.000) | 0.164 (−0.002) |
+
+- The GBT regressor's −0.018 without weekday is a tuning artifact: CV chose
+  maxBins 32 there instead of 64, with CV RMSE practically equal (32.736 vs 32.749).
+- **Weekday: no measurable contribution** (everything else within ±0.004, no common
+  direction). By the tie rule it can go; the team's call.
+- **Month: small but real.** All seven models lose (−0.001 to −0.003) without it. Keep.
+
+Summary of the 2026-09-28 ablations for the team's review: keep the coordinates and the
+month; ROUTE_DETOUR stays out; weekday is a candidate to drop; the cyclical encoding of
+hour and month (run A) ties one-hot and would replace both groups if adopted.
+
 ### 2026-09-28 · Kaggle C: airport coordinates and ROUTE_DETOUR (1%)
 
 Private kernel `buihuynhgiahuy/flight-delay-exp-coords-detour`; output in
