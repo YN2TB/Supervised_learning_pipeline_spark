@@ -59,7 +59,7 @@ before the next tournament. The next tournament waits for the team's visual EDA 
 | SCHED_DEP_MIN | r 0.998 with DEP_HOUR | |
 | SCHEDULED_TIME / log_sched_time | r 0.97–0.98 with distance | |
 | GC_DISTANCE_MI / log_gc_distance | r 1.00 with log_distance | also needed the Haversine Arrow UDF (~5x slower) |
-| SCHEDULE_SPEED_MPH | r 0.94 with log_distance | no outliers to fix either (max 543 mph) |
+| SCHEDULE_SPEED_MPH | r 0.94 with log_distance | no outliers worth a stage either (12 data-error rows above 550 mph, up to 902; 99.99% below 525) |
 | ROUTE_DETOUR | \|r\| < 0.01, ratio pinned near 1 | |
 | IS_WEEKEND | a function of DAY_OF_WEEK (r 0.78) | |
 | DAY (of month) | \|r\| < 0.01, no pattern across deciles | |

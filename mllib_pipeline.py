@@ -376,7 +376,9 @@ def _predeparture_stages(numeric: list) -> list:
     """Stages up to the one-hot encoders for a pre-departure feature set.
 
     Deliberately short. No outlier clip: the pre-departure numerics have no
-    outliers worth the name (implied schedule speed tops out at 543 mph,
+    outliers worth the name (implied schedule speed: 99.99% below 525 mph; 12 of
+    5.7M flights above 550, up to 902, Alaska Airlines in Oct-Nov with scheduled
+    times too short for the distance, i.e. data errors, too few to matter;
     distance is a real quantity whose long tail is transcontinental flights).
     No target encoding: nothing here is computed from the label.
     """
