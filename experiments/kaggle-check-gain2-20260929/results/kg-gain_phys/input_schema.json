@@ -1,0 +1,127 @@
+{
+  "fields": [
+    {
+      "name": "ORIGIN_AIRPORT",
+      "type": "string"
+    },
+    {
+      "name": "MONTH",
+      "type": "int"
+    },
+    {
+      "name": "DAY",
+      "type": "int"
+    },
+    {
+      "name": "DESTINATION_AIRPORT",
+      "type": "string"
+    },
+    {
+      "name": "DEP_HOUR",
+      "type": "int"
+    },
+    {
+      "name": "DAY_OF_WEEK",
+      "type": "int"
+    },
+    {
+      "name": "AIRLINE",
+      "type": "string"
+    },
+    {
+      "name": "FLIGHT_NUMBER",
+      "type": "int"
+    },
+    {
+      "name": "TAIL_NUMBER",
+      "type": "string"
+    },
+    {
+      "name": "SCHEDULED_DEPARTURE",
+      "type": "string"
+    },
+    {
+      "name": "DEPARTURE_TIME",
+      "type": "string"
+    },
+    {
+      "name": "DEPARTURE_DELAY",
+      "type": "int"
+    },
+    {
+      "name": "TAXI_OUT",
+      "type": "int"
+    },
+    {
+      "name": "WHEELS_OFF",
+      "type": "string"
+    },
+    {
+      "name": "SCHEDULED_TIME",
+      "type": "int"
+    },
+    {
+      "name": "DISTANCE",
+      "type": "int"
+    },
+    {
+      "name": "SCHEDULED_ARRIVAL",
+      "type": "string"
+    },
+    {
+      "name": "ORIGIN_LAT",
+      "type": "double"
+    },
+    {
+      "name": "ORIGIN_LON",
+      "type": "double"
+    },
+    {
+      "name": "DEST_LAT",
+      "type": "double"
+    },
+    {
+      "name": "DEST_LON",
+      "type": "double"
+    },
+    {
+      "name": "AIRLINE_NAME",
+      "type": "string"
+    },
+    {
+      "name": "SCHED_DEP_MIN",
+      "type": "int"
+    },
+    {
+      "name": "SCHED_ARR_MIN",
+      "type": "int"
+    },
+    {
+      "name": "WHEELS_OFF_MIN",
+      "type": "int"
+    },
+    {
+      "name": "IS_WEEKEND",
+      "type": "int"
+    },
+    {
+      "name": "ROUTE",
+      "type": "string"
+    },
+    {
+      "name": "sched_origin_hour",
+      "type": "double"
+    },
+    {
+      "name": "sched_dest_hour",
+      "type": "double"
+    },
+    {
+      "name": "origin_day_ratio",
+      "type": "double"
+    }
+  ],
+  "glm_offset": 69.0,
+  "feature_set": "wheelsoff_gain_phys",
+  "split": "day"
+}

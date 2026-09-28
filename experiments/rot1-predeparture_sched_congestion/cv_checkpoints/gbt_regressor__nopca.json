@@ -1,0 +1,18 @@
+{
+  "key": {
+    "feature_set": "predeparture_sched_congestion",
+    "sample_fraction": 0.01,
+    "tune_fraction": 0.5,
+    "folds": 2,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "class_weight": "balanced",
+    "experiment": "rot1-predeparture_sched_congestion"
+  },
+  "best_params": {
+    "maxDepth": 4,
+    "maxBins": 32
+  },
+  "primary": "rmse",
+  "value": 36.817701236362566
+}

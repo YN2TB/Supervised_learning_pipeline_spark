@@ -1,0 +1,21 @@
+{
+  "key": {
+    "feature_set": "wheelsoff_gain_nomph",
+    "sample_fraction": 0.01,
+    "tune_fraction": 0.5,
+    "folds": 2,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "pca_scope": "all",
+    "class_weight": "balanced",
+    "experiment": "kg-gain_nomph",
+    "split": "day",
+    "seed": 42
+  },
+  "best_params": {
+    "regParam": 0.01,
+    "elasticNetParam": 0.5
+  },
+  "primary": "rmse",
+  "value": 10.29709437134834
+}

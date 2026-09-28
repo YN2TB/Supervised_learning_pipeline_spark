@@ -1,0 +1,113 @@
+{
+  "baseline_regression__none": {
+    "rmse": 42.01505676330101,
+    "mae": 21.317450949937328,
+    "r2": -9.881448072768251e-05,
+    "model": "baseline_regression",
+    "arm": "none",
+    "task": "regression"
+  },
+  "baseline_classification__none": {
+    "areaUnderROC": 0.5,
+    "areaUnderPR": 0.11200566221357162,
+    "f1": 0.8353138864444594,
+    "accuracy": 0.8879943377864283,
+    "model": "baseline_classification",
+    "arm": "none",
+    "task": "classification"
+  },
+  "rule_prev_arr_delay_regression__none": {
+    "rmse": 37.969990259100314,
+    "mae": 17.730691018002336,
+    "r2": 0.1832032995989893,
+    "model": "rule_prev_arr_delay_regression",
+    "arm": "none",
+    "task": "regression"
+  },
+  "rule_prev_arr_delay_classification__none": {
+    "areaUnderROC": 0.7564699789294618,
+    "areaUnderPR": 0.4959352216501176,
+    "f1": 0.9006728272708315,
+    "accuracy": 0.9153322126868972,
+    "model": "rule_prev_arr_delay_classification",
+    "arm": "none",
+    "task": "classification"
+  },
+  "linear_regression__nopca": {
+    "rmse": 36.49416721070155,
+    "mae": 16.883212595163904,
+    "r2": 0.24546408169350986,
+    "train_seconds": 36.28413963317871,
+    "model": "linear_regression",
+    "arm": "nopca",
+    "task": "regression",
+    "best_regParam": 0.1,
+    "best_elasticNetParam": 0.5
+  },
+  "glm_poisson_log__nopca": {
+    "rmse": 38.37861823462361,
+    "mae": 18.669104993960563,
+    "r2": 0.16552818552489879,
+    "train_seconds": 76.33319449424744,
+    "model": "glm_poisson_log",
+    "arm": "nopca",
+    "task": "regression",
+    "best_regParam": 1.0
+  },
+  "linear_svc__nopca": {
+    "areaUnderROC": 0.8012097340944351,
+    "areaUnderPR": 0.5523284099355616,
+    "f1": 0.8642000276198689,
+    "accuracy": 0.8507475891356278,
+    "train_seconds": 82.20451664924622,
+    "model": "linear_svc",
+    "arm": "nopca",
+    "task": "classification",
+    "best_regParam": 0.01
+  },
+  "random_forest_regressor__nopca": {
+    "rmse": 35.6276575141885,
+    "mae": 15.809251720312046,
+    "r2": 0.28086977770827715,
+    "train_seconds": 141.6386845111847,
+    "model": "random_forest_regressor",
+    "arm": "nopca",
+    "task": "regression",
+    "best_maxDepth": 10,
+    "best_numTrees": 80
+  },
+  "random_forest_classifier__nopca": {
+    "areaUnderROC": 0.8264077337232966,
+    "areaUnderPR": 0.6185730295026615,
+    "f1": 0.9014252947777394,
+    "accuracy": 0.9020613996284172,
+    "train_seconds": 116.35275745391846,
+    "model": "random_forest_classifier",
+    "arm": "nopca",
+    "task": "classification",
+    "best_maxDepth": 10,
+    "best_numTrees": 80
+  },
+  "gbt_regressor__nopca": {
+    "rmse": 36.036235017536555,
+    "mae": 16.203338243653835,
+    "r2": 0.26428124981597145,
+    "train_seconds": 181.30942749977112,
+    "model": "gbt_regressor",
+    "arm": "nopca",
+    "task": "regression",
+    "best_maxDepth": 4,
+    "best_maxBins": 32
+  },
+  "gbt_classifier__nopca": {
+    "areaUnderROC": 0.8275438539331799,
+    "areaUnderPR": 0.6281798362435035,
+    "f1": 0.8847812522789156,
+    "accuracy": 0.8781739361231532,
+    "train_seconds": 137.680570602417,
+    "model": "gbt_classifier",
+    "arm": "nopca",
+    "task": "classification",
+    "best_maxDepth": 4
+  }
+}

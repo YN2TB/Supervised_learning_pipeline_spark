@@ -1,0 +1,19 @@
+{
+  "key": {
+    "feature_set": "predeparture_v2_depmin",
+    "sample_fraction": 0.01,
+    "tune_fraction": 0.5,
+    "folds": 2,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "pca_scope": "all",
+    "class_weight": "balanced",
+    "experiment": "kg-v2_depmin"
+  },
+  "best_params": {
+    "maxDepth": 10,
+    "numTrees": 40
+  },
+  "primary": "rmse",
+  "value": 31.941667787710177
+}

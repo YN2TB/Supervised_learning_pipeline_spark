@@ -1,0 +1,19 @@
+{
+  "key": {
+    "feature_set": "predeparture_v2_notime",
+    "sample_fraction": 0.01,
+    "tune_fraction": 0.5,
+    "folds": 2,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "pca_scope": "all",
+    "class_weight": "balanced",
+    "experiment": "kg-v2_notime"
+  },
+  "best_params": {
+    "maxDepth": 4,
+    "maxBins": 32
+  },
+  "primary": "rmse",
+  "value": 32.82480140512157
+}

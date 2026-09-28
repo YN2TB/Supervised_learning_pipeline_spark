@@ -1,0 +1,17 @@
+{
+  "key": {
+    "feature_set": "predeparture_inbound_dep",
+    "sample_fraction": 0.01,
+    "tune_fraction": 0.5,
+    "folds": 2,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "class_weight": "balanced",
+    "experiment": "rot1-predeparture_inbound_dep"
+  },
+  "best_params": {
+    "regParam": 1.0
+  },
+  "primary": "rmse",
+  "value": 36.02458946923309
+}

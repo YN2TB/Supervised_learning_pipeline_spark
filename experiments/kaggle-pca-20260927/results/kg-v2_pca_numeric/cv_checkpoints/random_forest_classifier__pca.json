@@ -1,0 +1,19 @@
+{
+  "key": {
+    "feature_set": "predeparture_v2",
+    "sample_fraction": 0.01,
+    "tune_fraction": 0.5,
+    "folds": 2,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "pca_scope": "numeric",
+    "class_weight": "balanced",
+    "experiment": "kg-v2_pca_numeric"
+  },
+  "best_params": {
+    "maxDepth": 10,
+    "numTrees": 80
+  },
+  "primary": "areaUnderROC",
+  "value": 0.794238236720112
+}

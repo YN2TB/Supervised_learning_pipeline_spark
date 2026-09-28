@@ -1,0 +1,55 @@
+{
+  "feature_set": "predeparture_inbound",
+  "sample": 0.05,
+  "max_dep_delay": null,
+  "rows": {
+    "train": 228236,
+    "test": 56546
+  },
+  "overlap": 0,
+  "score": {
+    "lr": {
+      "r2": 0.2748,
+      "rmse": 33.3086
+    },
+    "gbt": {
+      "r2": 0.3528,
+      "rmse": 31.4675
+    }
+  },
+  "single": {
+    "DEPARTURE_DELAY": {
+      "r2": 0.8898,
+      "rmse": 12.9827
+    },
+    "prev_arr_delay": {
+      "r2": 0.3202,
+      "rmse": 29.8812
+    }
+  },
+  "shuffled": {
+    "lr": {
+      "r2": 0.0006,
+      "rmse": 39.1034
+    },
+    "gbt": {
+      "r2": -0.0129,
+      "rmse": 39.3665
+    }
+  },
+  "temporal": {
+    "lr": {
+      "r2": 0.2398,
+      "rmse": 34.2655
+    },
+    "gbt": {
+      "r2": 0.3222,
+      "rmse": 32.3556
+    }
+  },
+  "temporal_rows": {
+    "train_jan_sep": 214531,
+    "test_oct_dec": 70251
+  },
+  "seconds": 263
+}

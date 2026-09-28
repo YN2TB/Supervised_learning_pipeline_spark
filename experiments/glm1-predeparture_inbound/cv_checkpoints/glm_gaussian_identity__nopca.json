@@ -1,0 +1,17 @@
+{
+  "key": {
+    "feature_set": "predeparture_inbound",
+    "sample_fraction": 0.01,
+    "tune_fraction": 0.5,
+    "folds": 2,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "class_weight": "balanced",
+    "experiment": "glm1-predeparture_inbound"
+  },
+  "best_params": {
+    "regParam": 0.1
+  },
+  "primary": "rmse",
+  "value": 33.29763661414165
+}

@@ -1,0 +1,57 @@
+{
+  "feature_set": "wheelsoff",
+  "sample": 0.05,
+  "max_dep_delay": 120.0,
+  "rows": {
+    "train": 223581,
+    "test": 55406
+  },
+  "overlap": 0,
+  "score": {
+    "lr": {
+      "r2": 0.8131,
+      "rmse": 10.4063
+    },
+    "gbt": {
+      "r2": 0.8179,
+      "rmse": 10.2722
+    }
+  },
+  "single": {
+    "DEPARTURE_DELAY": {
+      "r2": 0.7167,
+      "rmse": 12.8133
+    }
+  },
+  "shuffled": {
+    "lr": {
+      "r2": -0.0191,
+      "rmse": 24.3012
+    },
+    "gbt": {
+      "r2": -0.0211,
+      "rmse": 24.3248
+    }
+  },
+  "temporal": {
+    "lr": {
+      "r2": 0.8003,
+      "rmse": 10.1804
+    },
+    "gbt": {
+      "r2": 0.7998,
+      "rmse": 10.1945
+    }
+  },
+  "temporal_rows": {
+    "train_jan_sep": 210022,
+    "test_oct_dec": 68965
+  },
+  "physics": {
+    "r2": 0.8702,
+    "rmse": 8.6959,
+    "identity_holds": 1.0,
+    "test_rows_joined": 1117266
+  },
+  "seconds": 514
+}

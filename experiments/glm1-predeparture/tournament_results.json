@@ -1,0 +1,50 @@
+{
+  "baseline_regression__none": {
+    "rmse": 39.772659160971926,
+    "mae": 21.340888370148487,
+    "r2": -1.5114384330328079e-05,
+    "model": "baseline_regression",
+    "arm": "none",
+    "task": "regression"
+  },
+  "baseline_classification__none": {
+    "areaUnderROC": 0.5,
+    "areaUnderPR": 0.1097027581897706,
+    "f1": 0.8386291438650638,
+    "accuracy": 0.8902972418102294,
+    "model": "baseline_classification",
+    "arm": "none",
+    "task": "classification"
+  },
+  "glm_gaussian_identity__nopca": {
+    "rmse": 39.410713004103144,
+    "mae": 20.99804810454914,
+    "r2": 0.01810309481228667,
+    "train_seconds": 28.996680736541748,
+    "model": "glm_gaussian_identity",
+    "arm": "nopca",
+    "task": "regression",
+    "best_regParam": 0.1
+  },
+  "glm_poisson_log__nopca": {
+    "rmse": 39.39063627399054,
+    "mae": 20.9526146151551,
+    "r2": 0.019103242054549163,
+    "train_seconds": 25.583616971969604,
+    "model": "glm_poisson_log",
+    "arm": "nopca",
+    "task": "regression",
+    "best_regParam": 0.1
+  },
+  "linear_regression__nopca": {
+    "rmse": 39.41098058946474,
+    "mae": 20.982320191422343,
+    "r2": 0.01808976127374573,
+    "train_seconds": 26.746100425720215,
+    "model": "linear_regression",
+    "arm": "nopca",
+    "task": "regression",
+    "best_regParam": 0.1,
+    "best_elasticNetParam": 0.5
+  }
+}

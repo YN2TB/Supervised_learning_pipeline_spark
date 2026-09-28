@@ -1,0 +1,40 @@
+{
+  "steps": [
+    {
+      "step": "raw rows in flights.csv",
+      "rows": 5819079,
+      "kind": null
+    },
+    {
+      "step": "cancelled (never flew, no arrival delay)",
+      "rows": -89884,
+      "kind": "out of scope"
+    },
+    {
+      "step": "diverted (landed elsewhere)",
+      "rows": -15187,
+      "kind": "out of scope"
+    },
+    {
+      "step": "operated but a delay or taxi time missing",
+      "rows": 0,
+      "kind": "data gap"
+    },
+    {
+      "step": "operated, with a measured arrival delay",
+      "rows": 5714008,
+      "kind": null
+    },
+    {
+      "step": "airport without coordinates (5 unmapped October codes and a few reference airports)",
+      "rows": -10008,
+      "kind": "data gap"
+    },
+    {
+      "step": "modelling table (flights_curated)",
+      "rows": 5704000,
+      "kind": null
+    }
+  ],
+  "october_rows_raw": 486165
+}

@@ -1,0 +1,67 @@
+{
+  "baseline_regression__none": {
+    "rmse": 13.425910513108072,
+    "mae": 9.318594090407533,
+    "r2": -0.0007487636387271124,
+    "r2_arrival": 0.8910405652320836,
+    "model": "baseline_regression",
+    "arm": "none",
+    "task": "regression"
+  },
+  "physics_reference__none": {
+    "rmse": 61.081211658249316,
+    "mae": 41.070487027094266,
+    "r2": -19.713469675827927,
+    "r2_arrival": -1.255239306771049,
+    "model": "physics_reference",
+    "arm": "none",
+    "task": "regression"
+  },
+  "linear_regression__nopca": {
+    "rmse": 9.783875118020909,
+    "mae": 6.749790137874993,
+    "r2": 0.4685537250968925,
+    "r2_arrival": 0.9421372398079109,
+    "train_seconds": 51.01609015464783,
+    "model": "linear_regression",
+    "arm": "nopca",
+    "task": "regression",
+    "best_regParam": 0.01,
+    "best_elasticNetParam": 0.5
+  },
+  "glm_gaussian_identity__nopca": {
+    "rmse": 9.782063928190665,
+    "mae": 6.749093585275466,
+    "r2": 0.46875046943044896,
+    "r2_arrival": 0.9421586609199393,
+    "train_seconds": 61.9460391998291,
+    "model": "glm_gaussian_identity",
+    "arm": "nopca",
+    "task": "regression",
+    "best_regParam": 0.01
+  },
+  "random_forest_regressor__nopca": {
+    "rmse": 10.348698400285832,
+    "mae": 7.211236751503701,
+    "r2": 0.40542173935268067,
+    "r2_arrival": 0.9352635610861366,
+    "train_seconds": 152.43881726264954,
+    "model": "random_forest_regressor",
+    "arm": "nopca",
+    "task": "regression",
+    "best_maxDepth": 10,
+    "best_numTrees": 80
+  },
+  "gbt_regressor__nopca": {
+    "rmse": 10.150315557446643,
+    "mae": 7.027143805888712,
+    "r2": 0.42799917673547583,
+    "r2_arrival": 0.9377217453029152,
+    "train_seconds": 206.01055216789246,
+    "model": "gbt_regressor",
+    "arm": "nopca",
+    "task": "regression",
+    "best_maxDepth": 4,
+    "best_maxBins": 64
+  }
+}

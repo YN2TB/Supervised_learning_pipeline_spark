@@ -1,0 +1,17 @@
+{
+  "key": {
+    "feature_set": "predeparture_final_nogain",
+    "sample_fraction": 0.01,
+    "tune_fraction": 0.5,
+    "folds": 2,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "class_weight": "balanced",
+    "experiment": "rot1-predeparture_final_nogain"
+  },
+  "best_params": {
+    "maxDepth": 4
+  },
+  "primary": "areaUnderROC",
+  "value": 0.8169845598235266
+}

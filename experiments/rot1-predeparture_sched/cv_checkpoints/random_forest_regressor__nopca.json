@@ -1,0 +1,18 @@
+{
+  "key": {
+    "feature_set": "predeparture_sched",
+    "sample_fraction": 0.01,
+    "tune_fraction": 0.5,
+    "folds": 2,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "class_weight": "balanced",
+    "experiment": "rot1-predeparture_sched"
+  },
+  "best_params": {
+    "maxDepth": 6,
+    "numTrees": 80
+  },
+  "primary": "rmse",
+  "value": 36.60945473492647
+}
