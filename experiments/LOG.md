@@ -260,6 +260,69 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-29 · Kaggle H: day split, noise floor over three seeds, schedule-only rung (1%)
+
+Private kernels `flight-delay-exp-ladder-s42`, `-noise-s1`, `-noise-s2` (commit b4fee28,
+**day split**, hash sample: identical rows on any machine). Outputs in
+`experiments/kaggle-{ladder-s42,noise-s1,noise-s2}-20260929/`. Each seed draws its own
+1% sample and its own 72 test days (about 46k train, 11k test flights).
+
+**Noise floor.** Between seeds, the level of `v2` moves a lot: GBT classifier AUC
+0.824 / 0.838 / 0.837, RF regressor R² 0.367 / 0.351 / 0.340, LinearRegression R² 0.315 /
+0.360 / 0.243. A 1% test set is 11k flights on 72 days, so the absolute numbers of one
+small run are only good to about ±0.01 AUC and ±0.03 R². But a one-change comparison on
+the same seed is paired (same flights, same days), and there the noise is small:
+
+| paired difference against v2, seeds 42 / 1 / 2 | without DAY_OF_WEEK | hour as sin/cos |
+|---|---|---|
+| GBT classifier AUC | +0.001 / −0.001 / −0.001 | +0.002 / −0.000 / +0.001 |
+| RF classifier AUC | −0.002 / +0.000 / −0.001 | −0.002 / +0.001 / −0.003 |
+| LinearSVC AUC | +0.000 / +0.001 / +0.000 | +0.000 / +0.002 / +0.002 |
+| RF classifier AUC-PR | +0.002 / +0.003 / +0.002 | −0.003 / +0.005 / −0.002 |
+| LinearSVC AUC-PR | −0.000 / +0.001 / +0.002 | **+0.005 / +0.005 / +0.019** |
+| RF regressor R² | −0.000 / −0.000 / +0.001 | −0.001 / −0.001 / +0.003 |
+| LinearRegression R² | +0.000 / +0.000 / −0.001 | −0.002 / +0.001 / −0.001 |
+
+- **Paired noise is about ±0.003** (AUC, AUC-PR, R²), which confirms the ±0.005 tie rule
+  used since run A. The GBT regressor is the exception: CV flips between maxBins 32 and
+  64 (it chose 32 for v2 at seed 1), which moves its R² by 0.01 to 0.02 on its own.
+- **DAY_OF_WEEK: drop.** Every difference is inside the noise, and the RF classifier's
+  AUC-PR is slightly *better* without it on all three seeds.
+- **Hour as sin/cos: adopt.** Trees and LinearRegression tie; LinearSVC gains AUC-PR on
+  all three seeds (+0.005 to +0.019) and AUC on two. One pair of columns does at least as
+  well as the 24-slot one-hot.
+
+**Schedule-only rung** (`predeparture_v2_sched`: v2 without prev_arr_delay and
+inbound_overrun, i.e. what the published schedule says days ahead), seed 42:
+
+| model | schedule only | + inbound landed (v2) |
+|---|---|---|
+| GBT classifier AUC / AUC-PR | 0.676 / 0.281 | 0.824 / 0.632 |
+| RF classifier AUC / AUC-PR | 0.671 / 0.266 | 0.822 / 0.617 |
+| LinearSVC AUC / AUC-PR | 0.646 / 0.215 | 0.797 / 0.561 |
+| GBT classifier: late flights caught when flagging 10% | 25% | 50% |
+| RF regressor R² / MAE (min) | 0.068 / 21.4 | 0.367 / 16.6 |
+
+Baseline at seed 42: AUC-PR 0.130 (positive rate of these test days), MAE 22.5 min.
+Schedule-only AUC ≈ 0.67 matches the public pre-departure projects (0.58 to 0.66). Most
+of the score comes from knowing that the inbound aircraft has landed late.
+
+**GLM Poisson is unstable.** R² 0.232 at seed 42, **−779.5** at seed 1 (RMSE 1,157 min),
+−0.32 at seed 2. The log link exponentiates the linear predictor, so one unusual feature
+combination in test produces an astronomically large prediction: the failure that ruled
+out Gamma earlier, now in Poisson on a small sample. Not a bug in the pipeline; a reason
+to prefer the identity link (`glm_gaussian_identity`, already implemented, opt-in).
+
+**Data funnel** (`data_funnel.json`, full data): 5,819,079 raw flights; 89,884 cancelled
+(1.54%) and 15,187 diverted (0.26%) are out of scope, as their arrival delay does not
+exist; 0 operated flights lack a delay; 10,008 (0.17%) have an airport without
+coordinates; 5,704,000 remain (98.0%). The model answers "if this flight operates, how
+late does it arrive"; it does not predict cancellations.
+
+**Day split against random split:** the day-split levels (seed 42: GBT AUC 0.824) sit
+inside the seed-to-seed range, so the change of split is not measurable at 1%. The test
+days of seed 42 happen to be later than average (13.0% severe vs 11.1%).
+
 ### 2026-09-28 · Kaggle G: hour alone and month alone as sin/cos (1%)
 
 Private kernel `buihuynhgiahuy/flight-delay-exp-hour-month-cyclic` (commit 7ce74b0, still

@@ -124,3 +124,12 @@ before the next tournament. The next tournament waits for the team's visual EDA 
 - **Cyclical hour:** one sin/cos pair ties the 24-slot one-hot for every model, linear
   included (run G). A free simplification; the team's call.
 - **Cyclical month:** a tie leaning slightly worse than its one-hot (run G). Keep one-hot.
+
+### Tested (2026-09-29, Kaggle 1%, day split, three seeds; see LOG.md run H)
+
+- **Noise floor:** paired one-change differences stay within about ±0.003; the ±0.005
+  tie rule holds. Absolute levels of a 1% run move ±0.01 AUC between seeds.
+- **DAY_OF_WEEK:** drop, confirmed on three seeds.
+- **Hour as sin/cos:** adopt; ties for the trees, LinearSVC better on all three seeds.
+- **Schedule only** (without prev_arr_delay, inbound_overrun): AUC 0.65 to 0.68 against
+  0.80 to 0.82. The rotation features carry most of the score.
