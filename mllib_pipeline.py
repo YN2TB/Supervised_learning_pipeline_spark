@@ -1065,18 +1065,24 @@ PHYSICS_MIN_FLIGHTS = 30
 def physics_reference(train, test):
     """Wheels-off physics, as a baseline for the gain target.
 
-    gain = ELAPSED_TIME - SCHEDULED_TIME = TAXI_OUT + (AIR_TIME + TAXI_IN) -
-    SCHEDULED_TIME. TAXI_OUT is known at wheels-off; air time + taxi-in is not,
-    and is guessed by its training mean per route, month and hour (then per
-    route, then overall). Air time + taxi-in is recovered from columns the
-    curated table keeps: SCHEDULED_TIME + gain - TAXI_OUT (the identity held on
-    100% of test flights, experiments/LOG.md). A reference, not a feature: the
-    model never sees these means.
+    gain = ELAPSED_TIME - SCHEDULED_TIME = TAXI_OUT + (AIR_TIME + TAXI_IN -
+    SCHEDULED_TIME). TAXI_OUT is known at wheels-off; the bracket, i.e. how the
+    air time and taxi-in compare with the scheduled block, is not, and is
+    guessed by its training mean per route, month and hour, then per route,
+    then overall. The bracket is gain - TAXI_OUT, from columns the curated table
+    keeps (ARRIVAL_DELAY - DEPARTURE_DELAY = ELAPSED_TIME - SCHEDULED_TIME held
+    on 100% of test flights, experiments/LOG.md). A reference, not a feature:
+    the model never sees these means.
+
+    The bracket, not air time + taxi-in itself, is what gets averaged: it is
+    about the same on every route (a few minutes either side of the padding),
+    so the overall mean is a sane fallback, where the overall mean air time
+    applied to a transcontinental leg was off by hours (RMSE 61, run J).
     """
-    unknown = F.col("SCHEDULED_TIME") + F.col(GAIN_LABEL) - F.col("TAXI_OUT")
-    # A mean over a handful of flights is noise (on a 1% sample most route, month
-    # and hour cells hold one or two, and the reference scored worse than the
-    # plain mean): a cell needs PHYSICS_MIN_FLIGHTS to be used, else the route's.
+    unknown = F.col(GAIN_LABEL) - F.col("TAXI_OUT")
+    # A mean over a handful of flights is noise (on a 1% sample most route,
+    # month and hour cells hold one or two): a cell needs PHYSICS_MIN_FLIGHTS to
+    # be used, else the route's, else the overall mean.
     fine = (train.groupBy("ROUTE", "MONTH", "DEP_HOUR")
                  .agg(F.avg(unknown).alias("_u1"), F.count(F.lit(1)).alias("_n1"))
                  .filter(F.col("_n1") >= PHYSICS_MIN_FLIGHTS).drop("_n1"))
@@ -1087,8 +1093,7 @@ def physics_reference(train, test):
     guess = F.coalesce(F.col("_u1"), F.col("_u2"), F.lit(overall))
     return (test.join(F.broadcast(fine), ["ROUTE", "MONTH", "DEP_HOUR"], "left")
                 .join(F.broadcast(route), "ROUTE", "left")
-                .withColumn("prediction",
-                            F.col("TAXI_OUT") + guess - F.col("SCHEDULED_TIME")))
+                .withColumn("prediction", F.col("TAXI_OUT") + guess))
 
 
 def log_baselines(train, test, n_test: int, args) -> dict:

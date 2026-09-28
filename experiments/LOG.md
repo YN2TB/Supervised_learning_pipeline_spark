@@ -260,6 +260,29 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-29 · Kaggle J: the gain task's distance columns (1%, day split, seed 42)
+
+Kernel `flight-delay-check-gain2` (commit 9734cda); output in
+`experiments/kaggle-check-gain2-20260929/`. All three sets carry sched_dest_hour.
+
+| model | cong (log_distance, sched_mph) | phys (DISTANCE, SCHEDULED_TIME instead) | plus (all four) |
+|---|---|---|---|
+| LinearRegression R² / RMSE | 0.469 / 9.78 | 0.469 / 9.78 | **0.475 / 9.73** |
+| GBT R² / RMSE | 0.428 / 10.15 | 0.429 / 10.14 | **0.445 / 10.00** |
+| RF R² / RMSE | 0.405 / 10.35 | 0.405 / 10.35 | **0.416 / 10.26** |
+| R² on the arrival scale (LR) | 0.942 | 0.942 | 0.943 |
+
+- **`wheelsoff_gain_plus` for the tournament.** Swapping the log and ratio for the raw
+  columns ties; having both gains on every model (+0.006 linear, +0.011 to +0.017 trees).
+  DISTANCE, SCHEDULED_TIME, log_distance and sched_mph correlate 0.94 to 0.98 with each
+  other and all four stay: the target depends on their differences (the padding, the
+  curvature of air time in distance), which no single one of them carries.
+- **The physics reference broke a second time** (RMSE 61): the fallback for a sparse cell
+  was the overall mean of air time + taxi-in, applied to legs of any length. Fixed by
+  averaging gain − TAXI_OUT instead (how air time and taxi-in compare with the scheduled
+  block), which is similar on every route. Checked on the laptop: RMSE 10.99 at 1% and
+  10.17 at 5%, against a gain sd of 13.4. The models above (LR 9.73 at 1%) beat it.
+
 ### 2026-09-29 · Kaggle I: checks before the three-task tournament (1%, day split, seed 42)
 
 Kernels `flight-delay-check-v3` and `flight-delay-check-gain` (commit 678ef55); outputs in
