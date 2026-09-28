@@ -386,6 +386,9 @@ FEATURE_SETS.update({
     "predeparture_v2_dowcyc": dict(numeric=list(_V2), encoder="frequency", cyclic=["dow"]),
     "predeparture_v2_cyclic_dow": dict(numeric=list(_V2), encoder="frequency",
                                        cyclic=["hour", "month", "dow"]),
+    # Hour alone and month alone as sin/cos (v2_cyclic changes both at once).
+    "predeparture_v2_hourcyc": dict(numeric=list(_V2), encoder="frequency", cyclic=["hour"]),
+    "predeparture_v2_monthcyc": dict(numeric=list(_V2), encoder="frequency", cyclic=["month"]),
     # Scheduled time of day, one change each against v2: v2 carries it twice,
     # departure hour as a one-hot and arrival minute as a number.
     "predeparture_v2_nodephour": dict(numeric=list(_V2), encoder="frequency",
