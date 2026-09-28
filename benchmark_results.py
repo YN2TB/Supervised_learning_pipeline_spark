@@ -46,8 +46,14 @@ GRID = "#e3e2de"
 SERIES = ["#2a78d6", "#eb6834"]      # blue, orange
 SEQ = "#2a78d6"
 
-REG_METRICS = ["rmse", "mae", "r2"]
-CLF_METRICS = ["areaUnderROC", "areaUnderPR", "f1", "accuracy"]
+# Operational metrics first (experiments/LOG.md, 2026-09-28 review): minutes of
+# error for the regressors, and for the classifiers how many late flights a
+# fixed share of flags catches and how many flags are right. Spark's "f1" is
+# weighted over both classes (the all-negative baseline scores 0.84), so it is
+# left in MLflow but out of the tables. r2_arrival exists for the gain task only.
+REG_METRICS = ["mae", "median_ae", "rmse", "r2", "r2_arrival"]
+CLF_METRICS = ["recall_at_10pct", "precision_at_10pct", "precision_late", "recall_late",
+               "areaUnderROC", "areaUnderPR"]
 
 
 def style_axes(ax, xlabel="", ylabel="", title=""):
@@ -418,8 +424,9 @@ def write_comparison(runs: dict, reference: str, current: str) -> None:
         print(f"  (comparison skipped: {exc})")
         return
     lines = [f"Reference `{reference}` against `{current}`, test split, same seed.\n"]
-    for task, key, others in (("regression", "rmse", ["mae", "r2"]),
-                              ("classification", "areaUnderROC", ["areaUnderPR", "f1"])):
+    for task, key, others in (("regression", "mae", ["rmse", "r2"]),
+                              ("classification", "areaUnderROC",
+                               ["areaUnderPR", "recall_at_10pct"])):
         names = sorted({n for n, v in list(runs.items()) + list(ref.items())
                         if v.get("task") == task})
         if not names:
