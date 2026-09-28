@@ -260,6 +260,43 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-29 · Kaggle I: checks before the three-task tournament (1%, day split, seed 42)
+
+Kernels `flight-delay-check-v3` and `flight-delay-check-gain` (commit 678ef55); outputs in
+`experiments/kaggle-check-{v3,gain}-20260929/`. Both ran end to end, both arms, no failure.
+
+**A and C, `predeparture_v3`** (v2 without DAY_OF_WEEK, hour as sin/cos; GLM now Gaussian
+identity). Same levels as v2 on this seed (GBT classifier AUC 0.826 vs 0.824, RF regressor
+R² 0.367 vs 0.367). GLM Gaussian R² 0.313, identical to LinearRegression as it should be
+(the same least squares). PCA on the 12 numeric columns: trees lose 0.01 to 0.04, linear
+models tie, as before.
+
+**B, `wheelsoff_gain`** (target label_gain = label_delay − DEPARTURE_DELAY):
+
+| model | gain R² | RMSE (min) | MAE | R² on the arrival scale |
+|---|---|---|---|---|
+| mean of the gain (= arrival = departure delay + mean) | 0.00 | 13.43 | 9.32 | 0.891 |
+| physics reference | −0.23 | 14.86 | 7.96 | 0.867 |
+| LinearRegression / GLM Gaussian | 0.444 | 10.00 | 6.93 | 0.940 |
+| GBT | 0.429 | 10.14 | 7.02 | 0.938 |
+| RF | 0.405 | 10.35 | 7.21 | 0.935 |
+
+- **The reading the team wanted:** on the arrival scale the old wheels-off 0.93 splits into
+  0.89 free (departure delay plus the average) and about 0.05 from the model. On the part
+  that is still unknown at wheels-off, the model explains 44%.
+- **Without sched_mph** every model loses (LinearRegression 0.444 → 0.380, GBT −0.02):
+  keep. **With sched_dest_hour** the linear models gain (0.444 → 0.469, RMSE 10.00 → 9.78),
+  trees tie: keep.
+- **The physics reference was broken at 1%**: most route × month × hour cells hold one or
+  two flights, so their mean is noise, and it scored below the plain mean. Fixed in
+  ab66238: a cell needs 30 flights, else the route's mean. On the full data (audit, 5%) it
+  scored RMSE 8.78, below these models' 10.0: the bar the tournament has to clear.
+- **Why the linear model depends on sched_mph:** gain = TAXI_OUT + air time + taxi-in −
+  SCHEDULED_TIME, and air time grows with DISTANCE. A linear model cannot rebuild
+  −SCHEDULED_TIME from log_distance and a ratio. Added `wheelsoff_gain_phys` (DISTANCE and
+  SCHEDULED_TIME raw instead of log_distance and sched_mph) and `wheelsoff_gain_plus`
+  (both), with sched_dest_hour; checked in run J.
+
 ### 2026-09-29 · Kaggle H: day split, noise floor over three seeds, schedule-only rung (1%)
 
 Private kernels `flight-delay-exp-ladder-s42`, `-noise-s1`, `-noise-s2` (commit b4fee28,
