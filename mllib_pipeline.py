@@ -452,6 +452,18 @@ FEATURE_SETS.update({
         numeric=_GAIN + ["DISTANCE", "SCHEDULED_TIME", "sched_dest_hour"],
         encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
         tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    # One change each against wheelsoff_gain_plus: without DISTANCE (a tree splits
+    # log_distance and DISTANCE identically; only a linear model can tell them
+    # apart), and without the transformed pair (log_distance, sched_mph).
+    "wheelsoff_gain_nodist": dict(
+        numeric=_GAIN + ["SCHEDULED_TIME", "sched_dest_hour"],
+        encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
+        tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    "wheelsoff_gain_nolog": dict(
+        numeric=[c for c in _GAIN if c not in ("log_distance", "sched_mph")]
+        + ["DISTANCE", "SCHEDULED_TIME", "sched_dest_hour"],
+        encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
+        tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
     # v2 without what is known only once the inbound aircraft has landed
     # (prev_arr_delay, inbound_overrun): what the schedule alone can say, days ahead.
     # leg_of_day, has_prev and turn_slack are in the published schedule.
