@@ -14,7 +14,7 @@ import csv
 import os
 import sqlite3
 
-METRICS = ("r2", "rmse", "mae", "median_ae", "areaUnderROC", "areaUnderPR",
+METRICS = ("r2", "r2_arrival", "rmse", "mae", "median_ae", "areaUnderROC", "areaUnderPR",
            "recall_at_10pct", "precision_at_10pct", "precision_late", "recall_late", "f1")
 
 

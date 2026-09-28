@@ -57,6 +57,11 @@ TEST_DAY_SHARE = 0.2
 DATA_YEAR = 2015
 
 REG_LABEL = "label_delay"
+# Task B, the regression at wheels-off: the minutes made up (negative) or lost
+# between leaving the gate and reaching it, ARRIVAL_DELAY - DEPARTURE_DELAY. The
+# departure delay is known then and is added back, not learned; the model is
+# judged on the part that is still unknown.
+GAIN_LABEL = "label_gain"
 SEVERE_THRESHOLD_MIN = SEVERE_DELAY_THRESHOLD
 CLF_LABEL = "label_severe"
 WEIGHT_COL = "class_weight"
@@ -122,8 +127,24 @@ PRE_DEPARTURE_FORBIDDEN = [
     "DEPARTURE_DELAY", "dep_delay_clip", "DEPARTURE_TIME",
     "TAXI_OUT", "taxi_out_clip", "WHEELS_OFF", "WHEELS_OFF_MIN",
     "te_origin", "te_dest", "te_route",      # label means, whatever the horizon
-    REG_LABEL, CLF_LABEL, "label_glm", WEIGHT_COL,
+    REG_LABEL, CLF_LABEL, GAIN_LABEL, "label_glm", WEIGHT_COL,
 ]
+# At wheels-off the departure delay and taxi-out are known; still nothing may be
+# computed from a label.
+WHEELSOFF_FORBIDDEN = ["te_origin", "te_dest", "te_route",
+                       REG_LABEL, CLF_LABEL, GAIN_LABEL, "label_glm", WEIGHT_COL]
+
+
+def forbidden_for(spec: dict) -> list:
+    return WHEELSOFF_FORBIDDEN if spec.get("horizon") == "wheelsoff" else PRE_DEPARTURE_FORBIDDEN
+
+
+def reg_label_for(spec: dict) -> str:
+    return spec.get("label", REG_LABEL)
+
+
+def tasks_for(spec: dict) -> tuple:
+    return spec.get("tasks", ("regression", "classification"))
 
 # Airport busyness, target-free. See custom_transformers.FrequencyEncoder.
 FREQ_ENC_COLS = ["ORIGIN_AIRPORT", "DESTINATION_AIRPORT", "ROUTE"]
@@ -353,6 +374,8 @@ def cyclic_sql(groups: list) -> str:
 # anomalies 1, 3 and 4).
 _FINAL = FEATURE_SETS["predeparture_final"]["numeric"]
 _V2 = [c for c in _FINAL if c not in ("log_distance", "prev_air_gain")]
+_GAIN = ["DEPARTURE_DELAY", "TAXI_OUT", "log_distance", "sched_mph", "SCHED_ARR_MIN",
+         "ORIGIN_LAT", "ORIGIN_LON", "DEST_LAT", "DEST_LON"]
 FEATURE_SETS.update({
     "predeparture_final_zero": dict(numeric=list(_FINAL), encoder="frequency",
                                     first_leg_zero=True),
@@ -393,6 +416,28 @@ FEATURE_SETS.update({
     "predeparture_v2_dowcyc": dict(numeric=list(_V2), encoder="frequency", cyclic=["dow"]),
     "predeparture_v2_cyclic_dow": dict(numeric=list(_V2), encoder="frequency",
                                        cyclic=["hour", "month", "dow"]),
+    # The team's choice for tasks A (regression before departure) and C
+    # (classification), 2026-09-29: v2 without DAY_OF_WEEK (no contribution on
+    # three seeds) and with the hour as sin/cos (ties the trees, LinearSVC better
+    # on three seeds). MONTH stays one-hot. See experiments/LOG.md, runs D to H.
+    "predeparture_v3": dict(numeric=list(_V2), encoder="frequency",
+                            onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    # Task B, regression at wheels-off on the minutes made up or lost after
+    # pushback (label_gain). DEPARTURE_DELAY and TAXI_OUT are known then.
+    # sched_mph: DISTANCE over scheduled block time, the schedule padding.
+    "wheelsoff_gain": dict(numeric=_GAIN, encoder="frequency", horizon="wheelsoff",
+                           label=GAIN_LABEL, tasks=("regression",),
+                           onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    # One change each against wheelsoff_gain: without sched_mph (r 0.94 with
+    # log_distance), and with the destination's scheduled arrivals that hour.
+    "wheelsoff_gain_nomph": dict(numeric=[c for c in _GAIN if c != "sched_mph"],
+                                 encoder="frequency", horizon="wheelsoff",
+                                 label=GAIN_LABEL, tasks=("regression",),
+                                 onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    "wheelsoff_gain_cong": dict(numeric=_GAIN + ["sched_dest_hour"], encoder="frequency",
+                                horizon="wheelsoff", label=GAIN_LABEL,
+                                tasks=("regression",),
+                                onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
     # v2 without what is known only once the inbound aircraft has landed
     # (prev_arr_delay, inbound_overrun): what the schedule alone can say, days ahead.
     # leg_of_day, has_prev and turn_slack are in the published schedule.
@@ -450,6 +495,12 @@ def _predeparture_stages(numeric: list) -> list:
     derived = {"log_gc_distance", "SCHEDULE_SPEED_MPH", "ROUTE_DETOUR"}
     if derived & set(numeric):
         stages.append(HaversineTransformer())
+    if "sched_mph" in numeric:
+        # Scheduled speed from the published distance and block time: a low speed
+        # means the airline padded the schedule, so there is time to make up.
+        # Plain SQL, no Haversine UDF.
+        stages.append(SQLTransformer(
+            statement="SELECT *, DISTANCE / (SCHEDULED_TIME / 60.0) AS sched_mph FROM __THIS__"))
     log_pairs = [(src, dst) for src, dst in zip(LOG_COLS, LOG_OUT) if dst in numeric]
     if log_pairs:
         stages.append(SignedLog1pTransformer(inputCols=[s for s, _ in log_pairs],
@@ -481,8 +532,8 @@ def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
     stages = []
 
     if spec["encoder"] == "frequency":
-        leaked = [c for c in numeric if c in PRE_DEPARTURE_FORBIDDEN]
-        assert not leaked, f"pre-departure feature set uses {leaked}"
+        leaked = [c for c in numeric if c in forbidden_for(spec)]
+        assert not leaked, f"feature set {feature_set} uses {leaked}"
         stages += _predeparture_stages(numeric)
     else:
         stages.append(OutlierIQRTruncator(inputCols=CLIP_COLS, outputCols=CLIP_OUT,
@@ -518,7 +569,7 @@ def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
 
     assembler_inputs = numeric + ohe_out
     if spec["encoder"] == "frequency":
-        assert not set(assembler_inputs) & set(PRE_DEPARTURE_FORBIDDEN), assembler_inputs
+        assert not set(assembler_inputs) & set(forbidden_for(spec)), assembler_inputs
 
     if use_pca and pca_scope == "numeric":
         # PCA on the numeric columns only (experiments/LOG.md, 2026-09-26): the
@@ -635,7 +686,10 @@ def resolve_feature_names(fitted_model, sample_df, use_pca: bool, pca_k: int):
 # Model tournament definitions
 # ---------------------------------------------------------------------------
 # Defined in model_specs but left out of --models all; name them explicitly.
-OPT_IN_MODELS = {"glm_gaussian_identity"}
+# Poisson with a log link blew up on a small sample (R2 -779 at seed 1, LOG.md
+# run H): the log link exponentiates, and delay minutes add up rather than
+# multiply. The team switched the GLM to Gaussian identity on 2026-09-29.
+OPT_IN_MODELS = {"glm_poisson_log"}
 
 
 def model_specs(args):
@@ -648,14 +702,15 @@ def model_specs(args):
     # missed delay cost as much as a false alarm. AUC is barely affected; F1 and
     # the confusion matrix become meaningful.
     clf_w = {"weightCol": WEIGHT_COL} if args.class_weight == "balanced" else {}
+    reg = getattr(args, "reg_label", REG_LABEL)
     # Tree seeds: 7 as always at the default seed, so earlier runs reproduce;
     # another --seed varies them too, for the noise floor.
     mseed = 7 if args.seed == SPLIT_SEED else args.seed
 
-    lr = LinearRegression(featuresCol="features", labelCol=REG_LABEL,
+    lr = LinearRegression(featuresCol="features", labelCol=reg,
                           elasticNetParam=0.5, regParam=0.1, maxIter=50)
     grid["linear_regression"] = dict(
-        estimator=lr, task="regression", label=REG_LABEL,
+        estimator=lr, task="regression", label=reg,
         grid=(ParamGridBuilder()
               .addGrid(lr.regParam, [0.01, 0.1])
               .addGrid(lr.elasticNetParam, [0.0, 0.5])
@@ -687,11 +742,11 @@ def model_specs(args):
     # link, i.e. least squares fitted by IRLS. The log link above models a
     # multiplicative response and has no reason to fit a delay in minutes.
     # Opt-in (not in --models all) until a trial shows it earns a place.
-    glm_id = GeneralizedLinearRegression(featuresCol="features", labelCol=REG_LABEL,
+    glm_id = GeneralizedLinearRegression(featuresCol="features", labelCol=reg,
                                          family="gaussian", link="identity",
                                          maxIter=25, regParam=0.01)
     grid["glm_gaussian_identity"] = dict(
-        estimator=glm_id, task="regression", label=REG_LABEL,
+        estimator=glm_id, task="regression", label=reg,
         grid=(ParamGridBuilder().addGrid(glm_id.regParam, [0.01, 0.1]).build()))
 
     svc = LinearSVC(featuresCol="features", labelCol=CLF_LABEL, maxIter=30, **clf_w)
@@ -701,10 +756,10 @@ def model_specs(args):
               .addGrid(svc.regParam, [0.01, 0.1])
               .build()))
 
-    rfr = RandomForestRegressor(featuresCol="features", labelCol=REG_LABEL,
+    rfr = RandomForestRegressor(featuresCol="features", labelCol=reg,
                                 numTrees=40, maxDepth=8, maxBins=64, seed=mseed)
     grid["random_forest_regressor"] = dict(
-        estimator=rfr, task="regression", label=REG_LABEL,
+        estimator=rfr, task="regression", label=reg,
         grid=(ParamGridBuilder()
               .addGrid(rfr.maxDepth, [6, 10])
               .addGrid(rfr.numTrees, [40, 80])
@@ -719,10 +774,10 @@ def model_specs(args):
               .addGrid(rfc.numTrees, [40, 80])
               .build()))
 
-    gbtr = GBTRegressor(featuresCol="features", labelCol=REG_LABEL,
+    gbtr = GBTRegressor(featuresCol="features", labelCol=reg,
                         maxIter=40, maxDepth=5, maxBins=64, seed=mseed)
     grid["gbt_regressor"] = dict(
-        estimator=gbtr, task="regression", label=REG_LABEL,
+        estimator=gbtr, task="regression", label=reg,
         grid=(ParamGridBuilder()
               .addGrid(gbtr.maxDepth, [4, 6])
               .addGrid(gbtr.maxBins, [32, 64])
@@ -975,6 +1030,43 @@ def save_cv_checkpoint(args, run_name: str, best_params: dict, primary: str,
                    "primary": primary, "value": value}, fh, indent=2)
 
 
+def arrival_scale(preds, label: str) -> dict:
+    """For the gain target: the same predictions read as arrival delays.
+
+    arrival = DEPARTURE_DELAY + predicted gain, so the error in minutes is the
+    same; only R2 changes, because its denominator is the arrival delay's
+    variance, most of which is the departure delay. Comparable with the old
+    wheels-off R2 of 0.93.
+    """
+    if label != GAIN_LABEL:
+        return {}
+    arr = preds.withColumn("_arr", F.col("DEPARTURE_DELAY") + F.col("prediction"))
+    return {"r2_arrival": float(RegressionEvaluator(
+        labelCol=REG_LABEL, predictionCol="_arr", metricName="r2").evaluate(arr))}
+
+
+def physics_reference(train, test):
+    """Wheels-off physics, as a baseline for the gain target.
+
+    gain = ELAPSED_TIME - SCHEDULED_TIME = TAXI_OUT + (AIR_TIME + TAXI_IN) -
+    SCHEDULED_TIME. TAXI_OUT is known at wheels-off; air time + taxi-in is not,
+    and is guessed by its training mean per route, month and hour (then per
+    route, then overall). Air time + taxi-in is recovered from columns the
+    curated table keeps: SCHEDULED_TIME + gain - TAXI_OUT (the identity held on
+    100% of test flights, experiments/LOG.md). A reference, not a feature: the
+    model never sees these means.
+    """
+    unknown = F.col("SCHEDULED_TIME") + F.col(GAIN_LABEL) - F.col("TAXI_OUT")
+    fine = train.groupBy("ROUTE", "MONTH", "DEP_HOUR").agg(F.avg(unknown).alias("_u1"))
+    route = train.groupBy("ROUTE").agg(F.avg(unknown).alias("_u2"))
+    overall = float(train.agg(F.avg(unknown)).first()[0])
+    guess = F.coalesce(F.col("_u1"), F.col("_u2"), F.lit(overall))
+    return (test.join(F.broadcast(fine), ["ROUTE", "MONTH", "DEP_HOUR"], "left")
+                .join(F.broadcast(route), "ROUTE", "left")
+                .withColumn("prediction",
+                            F.col("TAXI_OUT") + guess - F.col("SCHEDULED_TIME")))
+
+
 def log_baselines(train, test, n_test: int, args) -> dict:
     """The "no model" rows every result is read against.
 
@@ -985,29 +1077,40 @@ def log_baselines(train, test, n_test: int, args) -> dict:
     models. Cheap (one pass over test each), so they are recomputed every run.
     """
     out = {}
-    mean_delay = float(train.agg(F.avg(REG_LABEL)).first()[0])
+    spec = FEATURE_SETS[args.feature_set]
+    reg = reg_label_for(spec)
+    mean_delay = float(train.agg(F.avg(reg)).first()[0])
     severe_rate = float(train.agg(F.avg(CLF_LABEL)).first()[0])
     from pyspark.ml.functions import array_to_vector
-    for task, label, preds, note in (
-        ("regression", REG_LABEL,
+    rows = [
+        ("regression", reg,
          test.withColumn("prediction", F.lit(mean_delay)),
-         f"predict the training mean, {mean_delay:.3f} min"),
+         f"predict the training mean of {reg}, {mean_delay:.3f} min"),
         ("classification", CLF_LABEL,
          test.withColumn("prediction", F.lit(0.0))
              .withColumn("rawPrediction",
                          array_to_vector(F.array(F.lit(1.0), F.lit(0.0)))),
          f"predict not-severe for every flight (training rate {severe_rate:.4f})"),
-    ):
-        run_name = f"baseline_{task}__none"
+    ]
+    if reg == GAIN_LABEL:
+        rows.append(("regression", reg, physics_reference(train, test),
+                     "physics: TAXI_OUT known, air time + taxi-in by their train mean "
+                     "per route, month and hour, minus the scheduled block time"))
+    for task, label, preds, note in rows:
+        if task not in tasks_for(spec):
+            continue
+        run_name = (f"baseline_{task}__none" if "physics" not in note
+                    else "physics_reference__none")
         metrics = {m: float(e.evaluate(preds)) for m, e in evaluators(task, label).items()}
+        metrics.update(arrival_scale(preds, label))
         with mlflow.start_run(run_name=run_name):
-            mlflow.log_params({"model": f"baseline_{task}", "arm": "none", "task": task,
+            mlflow.log_params({"model": run_name.split("__")[0], "arm": "none", "task": task,
                                "label": label, "feature_set": args.feature_set,
                                "baseline": note, "test_rows": n_test,
                                "sample_fraction": args.sample_fraction,
                                "split": args.split, "seed": args.seed})
             mlflow.log_metrics(metrics)
-        out[run_name] = dict(metrics, model=f"baseline_{task}", arm="none", task=task)
+        out[run_name] = dict(metrics, model=run_name.split("__")[0], arm="none", task=task)
         print(f"  baseline {task:<14} " + "  ".join(f"{k}={v:.4f}" for k, v in metrics.items())
               + f"   ({note})")
 
@@ -1015,8 +1118,11 @@ def log_baselines(train, test, n_test: int, args) -> dict:
     # one. For the wheels-off set: arrival delay = departure delay + the average
     # time made up (about -5 min). Whatever a model scores above its rule is
     # what the model adds; the rule alone is what "looks like a leak".
-    numeric = FEATURE_SETS[args.feature_set]["numeric"]
-    for col in [c for c in ("DEPARTURE_DELAY", "prev_arr_delay") if c in numeric]:
+    numeric = spec["numeric"]
+    # On the gain target a line on DEPARTURE_DELAY says nothing (r ~0.01); the
+    # physics reference above is the bar there.
+    rule_cols = [] if reg != REG_LABEL else ("DEPARTURE_DELAY", "prev_arr_delay")
+    for col in [c for c in rule_cols if c in numeric]:
         stats = train.agg(F.avg(col).alias("mx"), F.avg(REG_LABEL).alias("my"),
                           F.covar_samp(col, REG_LABEL).alias("cxy"),
                           F.var_samp(col).alias("vx")).first()
@@ -1208,10 +1314,15 @@ def main() -> None:
             in_scope = F.col("DEPARTURE_DELAY") <= F.lit(float(args.max_dep_delay))
             train, test = train.filter(in_scope), test.filter(in_scope)
 
-        min_delay = train.agg(F.min(REG_LABEL)).first()[0]
+        gain = F.col(REG_LABEL) - F.col("DEPARTURE_DELAY")
+        train = train.withColumn(GAIN_LABEL, gain)
+        test = test.withColumn(GAIN_LABEL, gain)
+        args.reg_label = reg_label_for(FEATURE_SETS[args.feature_set])
+
+        min_delay = train.agg(F.min(args.reg_label)).first()[0]
         glm_offset = float(abs(min(min_delay, 0.0)) + 1.0)
-        train = train.withColumn("label_glm", F.col(REG_LABEL) + F.lit(glm_offset))
-        test = test.withColumn("label_glm", F.col(REG_LABEL) + F.lit(glm_offset))
+        train = train.withColumn("label_glm", F.col(args.reg_label) + F.lit(glm_offset))
+        test = test.withColumn("label_glm", F.col(args.reg_label) + F.lit(glm_offset))
 
         # Balanced class weights from the training split's positive rate. Test
         # carries the column only so both frames share a schema; no evaluator
@@ -1234,7 +1345,7 @@ def main() -> None:
         # Written beside the results; register_winner copies it into models/
         # only when it ships a model, so a dev run cannot desync the contract
         # from the model that is actually in Production.
-        label_cols = {REG_LABEL, CLF_LABEL, "label_glm", WEIGHT_COL}
+        label_cols = {REG_LABEL, CLF_LABEL, GAIN_LABEL, "label_glm", WEIGHT_COL}
         serving = [f for f in train.schema.fields if f.name not in label_cols]
         with open(os.path.join(args.out_dir, "input_schema.json"), "w") as fh:
             json.dump({"fields": [{"name": f.name, "type": f.dataType.simpleString()}
@@ -1255,6 +1366,8 @@ def main() -> None:
         print(f"tuning on {n_tune:,} rows ({args.tune_fraction:.1%} of train)\n")
 
         specs = model_specs(args)
+        task_ok = tasks_for(FEATURE_SETS[args.feature_set])
+        specs = {m: sp for m, sp in specs.items() if sp["task"] in task_ok}
         wanted = ([m for m in specs if m not in OPT_IN_MODELS] if args.models == "all"
                   else [m.strip() for m in args.models.split(",")])
 
@@ -1386,6 +1499,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
 
                     preds = final.transform(test)
                     metrics = {m: float(e.evaluate(preds)) for m, e in evals.items()}
+                    metrics.update(arrival_scale(preds, spec["label"]))
                     metrics["train_seconds"] = time.time() - t0
                     mlflow.log_metrics(metrics)
 
