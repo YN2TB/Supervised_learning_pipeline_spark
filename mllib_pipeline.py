@@ -438,6 +438,20 @@ FEATURE_SETS.update({
                                 horizon="wheelsoff", label=GAIN_LABEL,
                                 tasks=("regression",),
                                 onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    # The physics of the gain target, stated as features (Kaggle check, 2026-09-29):
+    # gain = TAXI_OUT + air time + taxi-in - SCHEDULED_TIME, and air time grows
+    # with DISTANCE. DISTANCE and SCHEDULED_TIME correlate ~0.98, yet the target
+    # depends on their difference (the padding), so a linear model needs both
+    # raw. "phys" replaces log_distance and sched_mph with them; "plus" adds them.
+    "wheelsoff_gain_phys": dict(
+        numeric=[c for c in _GAIN if c not in ("log_distance", "sched_mph")]
+        + ["DISTANCE", "SCHEDULED_TIME", "sched_dest_hour"],
+        encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
+        tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    "wheelsoff_gain_plus": dict(
+        numeric=_GAIN + ["DISTANCE", "SCHEDULED_TIME", "sched_dest_hour"],
+        encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
+        tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
     # v2 without what is known only once the inbound aircraft has landed
     # (prev_arr_delay, inbound_overrun): what the schedule alone can say, days ahead.
     # leg_of_day, has_prev and turn_slack are in the published schedule.
@@ -1045,6 +1059,9 @@ def arrival_scale(preds, label: str) -> dict:
         labelCol=REG_LABEL, predictionCol="_arr", metricName="r2").evaluate(arr))}
 
 
+PHYSICS_MIN_FLIGHTS = 30
+
+
 def physics_reference(train, test):
     """Wheels-off physics, as a baseline for the gain target.
 
@@ -1057,8 +1074,15 @@ def physics_reference(train, test):
     model never sees these means.
     """
     unknown = F.col("SCHEDULED_TIME") + F.col(GAIN_LABEL) - F.col("TAXI_OUT")
-    fine = train.groupBy("ROUTE", "MONTH", "DEP_HOUR").agg(F.avg(unknown).alias("_u1"))
-    route = train.groupBy("ROUTE").agg(F.avg(unknown).alias("_u2"))
+    # A mean over a handful of flights is noise (on a 1% sample most route, month
+    # and hour cells hold one or two, and the reference scored worse than the
+    # plain mean): a cell needs PHYSICS_MIN_FLIGHTS to be used, else the route's.
+    fine = (train.groupBy("ROUTE", "MONTH", "DEP_HOUR")
+                 .agg(F.avg(unknown).alias("_u1"), F.count(F.lit(1)).alias("_n1"))
+                 .filter(F.col("_n1") >= PHYSICS_MIN_FLIGHTS).drop("_n1"))
+    route = (train.groupBy("ROUTE")
+                  .agg(F.avg(unknown).alias("_u2"), F.count(F.lit(1)).alias("_n2"))
+                  .filter(F.col("_n2") >= PHYSICS_MIN_FLIGHTS).drop("_n2"))
     overall = float(train.agg(F.avg(unknown)).first()[0])
     guess = F.coalesce(F.col("_u1"), F.col("_u2"), F.lit(overall))
     return (test.join(F.broadcast(fine), ["ROUTE", "MONTH", "DEP_HOUR"], "left")

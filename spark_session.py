@@ -66,6 +66,9 @@ def build_spark(app_name: str, cores: str = "*", driver_memory: str = "10g",
 OFFICIAL_EXPERIMENTS = {
     "flight-delay-mllib": ("docs", "benchmarks"),                       # wheels-off
     "flight-delay-predeparture": ("docs", "benchmarks", "flight-delay-predeparture"),
+    # The three-task tournament (2026-09-29): A and C, then B.
+    "flight-delay-v3": ("docs", "benchmarks", "flight-delay-v3"),
+    "flight-delay-gain": ("docs", "benchmarks", "flight-delay-gain"),
 }
 
 
