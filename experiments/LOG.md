@@ -260,6 +260,64 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-28 · Kaggle F: scheduled time of day, with and without (1%)
+
+Private kernel `buihuynhgiahuy/flight-delay-exp-sched-time` (commit 9552854); output in
+`experiments/kaggle-sched-time-20260928/results/`. Same Kaggle split as A to E (the `v2`
+rows match to four decimals). v2 carries the time of day twice: departure hour as a
+24-slot one-hot (DEP_HOUR) and arrival minute as a number (SCHED_ARR_MIN).
+
+| model | v2 | without DEP_HOUR | without SCHED_ARR_MIN | without both | + SCHED_DEP_MIN |
+|---|---|---|---|---|---|
+| GBT classifier AUC / PR | 0.832 / 0.634 | 0.832 / 0.633 | 0.828 / 0.628 | 0.824 / 0.624 | 0.829 / 0.633 |
+| RF classifier AUC / PR | 0.829 / 0.618 | 0.831 / 0.626 | 0.826 / 0.619 | **0.816 / 0.604** | 0.827 / 0.620 |
+| LinearSVC AUC | 0.802 | 0.795 | 0.801 | **0.783** | 0.802 |
+| RF regressor R² | 0.282 | 0.284 | 0.281 | 0.280 | 0.280 |
+| GBT regressor R² | 0.280 | 0.263 * | 0.264 * | 0.262 * | 0.277 |
+| LinearRegression R² | 0.2455 | 0.2412 | 0.2455 | 0.2390 | 0.2456 |
+| GLM Poisson R² | 0.166 | 0.164 | 0.166 | 0.161 | 0.167 |
+
+\* CV chose maxBins 32 instead of 64 with CV RMSE practically equal (32.70 to 32.86 vs
+32.75): the same tuning artifact as run D, not the features. Read the other six models.
+
+- **Without any time of day, every model loses**, the largest drop of all the ablations
+  (LinearSVC −0.019 AUC, RF classifier −0.013 AUC / −0.014 AUC-PR). Predicted before the
+  run: time of day is the strongest schedule effect (severe rate 3.9% at 5 am, 16.9% at 8 pm).
+- **Each copy serves a different model family**, as FEATURE_DECISIONS anomaly 7 read from
+  the importances. Without DEP_HOUR the linear models lose (LinearSVC −0.007, LR −0.004,
+  GLM −0.003) and the trees do not (RF slightly up). Without SCHED_ARR_MIN the trees lose
+  (GBT classifier −0.004 AUC / −0.005 PR, RF −0.002) and LinearRegression is identical to
+  four decimals. **Keep both.**
+- **SCHED_DEP_MIN adds nothing** (all within ±0.003): the trees already have the time from
+  SCHED_ARR_MIN, the linear models from DEP_HOUR. Stays out.
+
+### 2026-09-28 · Kaggle E: weekday as a sin/cos pair (1%)
+
+Private kernel `buihuynhgiahuy/flight-delay-exp-dow-cyclic` (commit 9552854); output in
+`experiments/kaggle-dow-cyclic-20260928/results/`. Same split; `v2` and `v2_cyclic`
+reproduce runs A and D to four decimals.
+
+| model | v2 | weekday sin/cos | v2_cyclic (hour, month) | all three cyclical |
+|---|---|---|---|---|
+| GBT classifier AUC / PR | 0.832 / 0.634 | 0.832 / 0.634 | 0.834 / 0.636 | 0.833 / 0.635 |
+| RF classifier AUC / PR | 0.829 / 0.618 | 0.826 / 0.617 | 0.828 / 0.625 | 0.828 / 0.625 |
+| LinearSVC AUC / PR | 0.802 / 0.553 | 0.802 / 0.552 | 0.803 / 0.558 | 0.803 / 0.558 |
+| RF regressor R² | 0.282 | 0.280 | 0.285 | 0.285 |
+| GBT regressor R² | 0.280 | 0.279 | 0.280 | 0.282 |
+| LinearRegression R² | 0.2455 | 0.2450 | 0.2444 | 0.2439 |
+| GLM Poisson R² | 0.166 | 0.166 | 0.166 | 0.166 |
+
+- **Weekday sin/cos ties its one-hot** (all within ±0.003), and run D showed the one-hot
+  ties no weekday at all. Weekday adds nothing whichever way it is encoded. As
+  predicted by the EDA fit: one sin/cos pair explains 15.6% of the weekday pattern.
+- **All three cyclical ties hour and month cyclical** (±0.002). If weekday stays, two
+  dense columns cost less than six one-hot slots; dropping it is simpler still.
+- v2_cyclic against v2 again leans slightly toward cyclical in AUC-PR (RF +0.006,
+  LinearSVC +0.005) and slightly against for LinearRegression (−0.001): still a tie.
+
+Decision material for the team: time of day stays in both forms, weekday is the one
+calendar group with no measurable contribution under any encoding.
+
 ### 2026-09-28 · Kaggle D: weekday and month one-hot (1%)
 
 Private kernel `buihuynhgiahuy/flight-delay-exp-dow-month`; output in

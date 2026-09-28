@@ -111,3 +111,14 @@ before the next tournament. The next tournament waits for the team's visual EDA 
   direction. The earlier recovery was has_prev's.
 - **Open:** drop both (the tie rule says so) and zero-fill; the two removals were not
   tested together.
+
+### Tested (2026-09-28, Kaggle 1%, one change each; see LOG.md runs C to F)
+
+- **Coordinates:** keep (the trees lose up to −0.009 AUC without them).
+- **ROUTE_DETOUR:** stays out (the lasso zeroes it; the trees do not improve).
+- **Month:** keep (all seven models lose a little without it).
+- **Weekday:** no measurable contribution, as one-hot or as a sin/cos pair. Drop candidate.
+- **Time of day:** keep both copies. Without either, every model loses (up to −0.019
+  AUC). DEP_HOUR serves the linear models, SCHED_ARR_MIN the trees; adding
+  SCHED_DEP_MIN changes nothing.
+- **Cyclical hour and month:** ties the one-hot; the team's call.
