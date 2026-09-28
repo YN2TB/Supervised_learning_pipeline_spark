@@ -52,7 +52,7 @@ def main() -> int:
         old_train, old_test = old.randomSplit([0.8, 0.2], seed=SPLIT_SEED)
 
         # NEW behaviour: split first, offset from train only.
-        new_train, new_test = make_split(df, 1.0)
+        new_train, new_test = make_split(df, 1.0, mode="random")
         min_train = new_train.agg(F.min(REG_LABEL)).first()[0]
         off_train = float(abs(min(min_train, 0.0)) + 1.0)
 

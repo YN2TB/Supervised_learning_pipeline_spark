@@ -48,6 +48,13 @@ MODEL_DIR = path("models")
 BENCH_DIR = path("docs", "benchmarks")
 REGISTERED_MODEL = "flight_delay_pipeline"
 SPLIT_SEED = 42
+# How train and test are separated (make_split). "day": in every month a random
+# 20% of its days are test, so no day has flights on both sides. "random": the
+# row-level randomSplit every run before 2026-09-28 used; kept to reproduce them.
+SPLIT_MODES = ("day", "random")
+DEFAULT_SPLIT = "day"
+TEST_DAY_SHARE = 0.2
+DATA_YEAR = 2015
 
 REG_LABEL = "label_delay"
 SEVERE_THRESHOLD_MIN = SEVERE_DELAY_THRESHOLD
@@ -723,19 +730,63 @@ def model_specs(args):
     return grid
 
 
-def make_split(df, sample_fraction: float = 1.0):
+def test_days(seed: int = SPLIT_SEED, share: float = TEST_DAY_SHARE) -> list:
+    """The test days: in every month, a random share of its days, fixed by the seed.
+
+    Rounded per month, so 6 days in each month of 2015 (72 of 365, 19.7%).
+    Returned as MONTH * 100 + DAY.
+    """
+    import calendar
+    import random
+    rng = random.Random(seed)
+    days = []
+    for month in range(1, 13):
+        n = calendar.monthrange(DATA_YEAR, month)[1]
+        days += [month * 100 + d for d in sorted(rng.sample(range(1, n + 1), round(n * share)))]
+    return days
+
+
+def hash_sample(df, fraction: float, salt: int):
+    """A row sample that depends on the flight, not on how the data is partitioned.
+
+    df.sample draws per partition, so the same seed picks different rows at a
+    different core count (the laptop and Kaggle disagreed). Hashing the flight key
+    picks the same rows everywhere.
+    """
+    h = F.pmod(F.xxhash64(*FLIGHT_KEY, F.lit(salt)), F.lit(1_000_000))
+    return df.filter(h < F.lit(int(round(fraction * 1_000_000))))
+
+
+def make_split(df, sample_fraction: float = 1.0, mode: str = DEFAULT_SPLIT):
     """The single definition of the train/test split.
 
     Anything that needs the *same* test rows as the tournament - the residual
-    plot, an ad-hoc error analysis - must call this rather than re-typing
-    ``randomSplit``. Re-deriving it elsewhere looks harmless and is not: the
-    optional sample runs BEFORE the split, so a caller that forgets it gets a
-    different partition of the data and silently mixes training rows into what
-    it calls the test set.
+    plot, an ad-hoc error analysis - must call this rather than re-typing it.
+    Re-deriving it elsewhere looks harmless and is not: the optional sample runs
+    BEFORE the split, so a caller that forgets it gets a different partition of
+    the data and silently mixes training rows into what it calls the test set.
+
+    mode="day" (default since 2026-09-28): whole days go to test, 20% of the days
+    of every month (test_days). Flights on one day share its weather, its airport
+    congestion and its aircraft rotations (prev_arr_delay of one leg is the label
+    of the leg before), so a row-level split puts near-copies of each test day in
+    train and flatters the score. Every month keeps the same share of test days,
+    so seasons stay balanced. The split and the optional sample are a fixed list
+    and a hash, so they are identical on any machine and at any core count.
+
+    mode="random": the old row-level randomSplit, to reproduce earlier runs. It
+    depends on the read partitioning (CLAUDE.md section 4).
     """
+    if mode == "random":
+        if sample_fraction < 1.0:
+            df = df.sample(False, sample_fraction, seed=SPLIT_SEED)
+        return df.randomSplit([0.8, 0.2], seed=SPLIT_SEED)
+    if mode != "day":
+        raise ValueError(f"unknown split mode {mode!r}; expected one of {SPLIT_MODES}")
     if sample_fraction < 1.0:
-        df = df.sample(False, sample_fraction, seed=SPLIT_SEED)
-    return df.randomSplit([0.8, 0.2], seed=SPLIT_SEED)
+        df = hash_sample(df, sample_fraction, SPLIT_SEED)
+    in_test = (F.col("MONTH") * 100 + F.col("DAY")).isin(test_days())
+    return df.filter(~in_test), df.filter(in_test)
 
 
 def evaluators(task: str, label: str):
@@ -764,12 +815,16 @@ def evaluators(task: str, label: str):
 # independent protections, so a crash costs one arm rather than an afternoon.
 
 
-def completed_arms(experiment: str) -> dict:
+def completed_arms(experiment: str, match: dict | None = None) -> dict:
     """Arms already finished, read back from the tracking store.
 
     MLflow is the source of truth for what has completed - it is written as
     each arm ends, so it survives a crash that never reached the summary file.
     A run with no metrics was started but did not finish, and is not counted.
+    With `match`, only runs whose logged params equal it count (a missing
+    "split" param means "random", the only split before it was logged), so a
+    new tournament in the same experiment does not skip arms an older
+    configuration finished.
     """
     try:
         client = MlflowClient()
@@ -789,6 +844,9 @@ def completed_arms(experiment: str) -> dict:
                 continue
             if r.info.status != "FINISHED":
                 continue
+            if match and any(r.data.params.get(k, "random" if k == "split" else None) != str(v)
+                             for k, v in match.items()):
+                continue
             done[run_name] = dict(
                 r.data.metrics,
                 model=r.data.params.get("model", run_name.split("__")[0]),
@@ -799,6 +857,12 @@ def completed_arms(experiment: str) -> dict:
     except Exception as exc:  # noqa: BLE001 - never let bookkeeping stop a run
         print(f"  (could not read previous runs: {exc})")
         return {}
+
+
+def resume_match(args) -> dict:
+    """The logged params an earlier arm must share to be skipped on resume."""
+    return {"feature_set": args.feature_set, "split": args.split,
+            "sample_fraction": args.sample_fraction}
 
 
 def checkpoint(results: dict, failures: dict, out_dir: str = BENCH_DIR) -> None:
@@ -860,7 +924,8 @@ def cv_checkpoint_key(args) -> dict:
             "tune_fraction": args.tune_fraction, "folds": args.folds,
             "pca_variance": args.pca_variance, "pca_k": args.pca_k,
             "pca_scope": args.pca_scope,
-            "class_weight": args.class_weight, "experiment": args.experiment}
+            "class_weight": args.class_weight, "experiment": args.experiment,
+            "split": args.split}
 
 
 def load_cv_checkpoint(args, run_name: str):
@@ -913,7 +978,8 @@ def log_baselines(train, test, n_test: int, args) -> dict:
             mlflow.log_params({"model": f"baseline_{task}", "arm": "none", "task": task,
                                "label": label, "feature_set": args.feature_set,
                                "baseline": note, "test_rows": n_test,
-                               "sample_fraction": args.sample_fraction})
+                               "sample_fraction": args.sample_fraction,
+                               "split": args.split})
             mlflow.log_metrics(metrics)
         out[run_name] = dict(metrics, model=f"baseline_{task}", arm="none", task=task)
         print(f"  baseline {task:<14} " + "  ".join(f"{k}={v:.4f}" for k, v in metrics.items())
@@ -947,7 +1013,8 @@ def log_baselines(train, test, n_test: int, args) -> dict:
                                    "task": task, "label": label,
                                    "feature_set": args.feature_set, "baseline": note,
                                    "test_rows": n_test,
-                                   "sample_fraction": args.sample_fraction})
+                                   "sample_fraction": args.sample_fraction,
+                                   "split": args.split})
                 mlflow.log_metrics(metrics)
             out[run_name] = dict(metrics, model=f"rule_{col.lower()}_{task}", arm="none",
                                  task=task)
@@ -964,6 +1031,9 @@ def main() -> None:
     ap.add_argument("--tune-fraction", type=float, default=0.1,
                     help="fraction of TRAIN used for cross-validation search")
     ap.add_argument("--folds", type=int, default=5)
+    ap.add_argument("--split", default=DEFAULT_SPLIT, choices=SPLIT_MODES,
+                    help="day: 20%% of the days of every month are test (default); "
+                         "random: the old row-level randomSplit")
     ap.add_argument("--parallelism", type=int, default=4)
     ap.add_argument("--feature-set", default=DEFAULT_FEATURE_SET,
                     choices=sorted(FEATURE_SETS),
@@ -1046,9 +1116,10 @@ def main() -> None:
     os.makedirs(args.out_dir, exist_ok=True)
     if args.register_only:
         mlflow.set_tracking_uri(TRACKING_URI)
-        results = completed_arms(args.experiment)
+        results = completed_arms(args.experiment, resume_match(args))
         if not results:
-            print(f"no finished arms in {args.experiment!r}; nothing to register")
+            print(f"no finished arms in {args.experiment!r} with {resume_match(args)}; "
+                  "nothing to register (pass the run's --feature-set and --split)")
             return
         spark = build_spark("mllib-register")      # load_model needs a session
         try:
@@ -1087,12 +1158,12 @@ def main() -> None:
         # claims nothing fitted ever sees test data, and min() over test is
         # fitted. Cheaper to be consistent than to caveat it.
         #
-        # randomSplit assigns rows from the input's existing partitioning, and
-        # adding a projection afterwards is a narrow transformation, so moving
-        # withColumn below the split leaves the split itself unchanged. That
-        # matters: the 14 completed arms are only comparable while the split
-        # is byte-identical, and scripts/check_split.py asserts it.
-        train, test = make_split(df, args.sample_fraction)
+        # The split is by day (make_split): rows are filtered on a fixed list of
+        # test days, so nothing added before or after it can move a row across.
+        # With --split random, randomSplit assigns rows from the input's existing
+        # partitioning; a projection after it is a narrow transformation and
+        # leaves it unchanged, which scripts/check_split.py asserts.
+        train, test = make_split(df, args.sample_fraction, args.split)
         # Rotation and congestion lookups, joined after the split so the rows in
         # each half do not move. A no-op for feature sets that use neither.
         numeric = FEATURE_SETS[args.feature_set]["numeric"]
@@ -1140,14 +1211,17 @@ def main() -> None:
             json.dump({"fields": [{"name": f.name, "type": f.dataType.simpleString()}
                                   for f in serving],
                        "glm_offset": glm_offset,
-                       "feature_set": args.feature_set}, fh, indent=2)
+                       "feature_set": args.feature_set,
+                       "split": args.split}, fh, indent=2)
 
         # Tuning runs on a sample; the winning params are then refitted on the
         # full training set. 7 model families x 5 folds x grid over 4.5M rows
         # is many hours, and the ranking of hyperparameters is stable well
         # before the metric value is.
         tune = (train if args.tune_fraction >= 1.0
-                else train.sample(False, args.tune_fraction, seed=SPLIT_SEED).cache())
+                else (hash_sample(train, args.tune_fraction, SPLIT_SEED + 1)
+                      if args.split == "day"
+                      else train.sample(False, args.tune_fraction, seed=SPLIT_SEED)).cache())
         n_tune = tune.count()
         print(f"tuning on {n_tune:,} rows ({args.tune_fraction:.1%} of train)\n")
 
@@ -1155,7 +1229,8 @@ def main() -> None:
         wanted = ([m for m in specs if m not in OPT_IN_MODELS] if args.models == "all"
                   else [m.strip() for m in args.models.split(",")])
 
-        already_done = completed_arms(args.experiment) if args.resume else {}
+        already_done = (completed_arms(args.experiment, resume_match(args))
+                        if args.resume else {})
         if already_done:
             print("resuming: %d arm(s) already complete" % len(already_done))
             print("")
@@ -1238,6 +1313,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                         "tune_rows": n_tune, "train_rows": n_train,
                         "test_rows": n_test, "grid_size": len(spec["grid"]),
                         "sample_fraction": args.sample_fraction,
+                        "split": args.split,
                     "max_dep_delay": args.max_dep_delay if args.max_dep_delay is not None else "",
                     })
                     if args.note:

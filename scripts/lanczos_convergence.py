@@ -50,7 +50,7 @@ def covariance_of_training_split() -> tuple[np.ndarray, int]:
     # Stages 1 to 11: everything up to and including VarianceThresholdSelector,
     # so the rows are exactly what stage 12 (PCA) was fitted on.
     upto_selector = PipelineModel(stages=model.stages[:11])
-    train, _ = make_split(spark.read.parquet(CURATED))
+    train, _ = make_split(spark.read.parquet(CURATED), mode="random")
     feats = (upto_selector.transform(train).select("features_selected")
              .persist(StorageLevel.MEMORY_AND_DISK))
     # Stay in the JVM. A Python RDD over 4.56M rows, next to the Arrow UDF's own

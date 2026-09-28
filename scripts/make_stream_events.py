@@ -45,7 +45,11 @@ def main() -> None:
     if not os.path.exists(meta_path):
         raise SystemExit(f"missing {meta_path} - run mllib_pipeline.py first")
     with open(meta_path) as fh:
-        cols = [f["name"] for f in json.load(fh)["fields"]]
+        meta = json.load(fh)
+    cols = [f["name"] for f in meta["fields"]]
+    # The split the registered model was trained with; models saved before the
+    # day split existed used randomSplit.
+    split = meta.get("split", "random")
 
     # cores="*" and make_split, exactly as the tournament: randomSplit draws per
     # read partition, so a different core count gives a different split and the
@@ -54,7 +58,7 @@ def main() -> None:
     try:
         from mllib_pipeline import CURATED, add_context_features, make_split
         df = spark.read.parquet(CURATED)
-        _, test = make_split(df)
+        _, test = make_split(df, mode=split)
         # The aircraft's previous leg and the scheduled congestion, if the model
         # reads them; a real feed would carry them, here they are looked up.
         test = add_context_features(spark, df, test, cols)

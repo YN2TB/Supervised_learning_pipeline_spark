@@ -108,6 +108,7 @@ def load_runs(experiment: str) -> dict:
                               arm=r.data.params.get("arm", name.split("__")[1]),
                               task=r.data.params.get("task", ""),
                               sample_fraction=float(sf) if sf is not None else None,
+                              split=r.data.params.get("split", "random"),
                               test_rows=int(r.data.params["test_rows"])
                               if r.data.params.get("test_rows") else None)
         if rows:
@@ -258,7 +259,8 @@ def plot_residuals(runs: dict) -> None:
             frac = float(next((r.get("sample_fraction", 1.0)
                                for r in runs.values()
                                if r.get("sample_fraction") is not None), 1.0))
-            _, test = make_split(df, frac)
+            split = next((r.get("split") for r in runs.values() if r.get("split")), "random")
+            _, test = make_split(df, frac, split)
 
             # Matching core counts is necessary but not sufficient - a different
             # machine has a different core count. So verify against the row
