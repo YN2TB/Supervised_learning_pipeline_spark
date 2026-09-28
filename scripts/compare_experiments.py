@@ -14,7 +14,8 @@ import csv
 import os
 import sqlite3
 
-METRICS = ("r2", "rmse", "areaUnderROC", "areaUnderPR", "f1")
+METRICS = ("r2", "rmse", "mae", "median_ae", "areaUnderROC", "areaUnderPR",
+           "recall_at_10pct", "precision_at_10pct", "precision_late", "recall_late", "f1")
 
 
 def collect(db: str, prefix: str) -> tuple[list[str], dict]:

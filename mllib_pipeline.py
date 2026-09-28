@@ -393,6 +393,12 @@ FEATURE_SETS.update({
     "predeparture_v2_dowcyc": dict(numeric=list(_V2), encoder="frequency", cyclic=["dow"]),
     "predeparture_v2_cyclic_dow": dict(numeric=list(_V2), encoder="frequency",
                                        cyclic=["hour", "month", "dow"]),
+    # v2 without what is known only once the inbound aircraft has landed
+    # (prev_arr_delay, inbound_overrun): what the schedule alone can say, days ahead.
+    # leg_of_day, has_prev and turn_slack are in the published schedule.
+    "predeparture_v2_sched": dict(
+        numeric=[c for c in _V2 if c not in ("prev_arr_delay", "inbound_overrun")],
+        encoder="frequency"),
     # Hour alone and month alone as sin/cos (v2_cyclic changes both at once).
     "predeparture_v2_hourcyc": dict(numeric=list(_V2), encoder="frequency", cyclic=["hour"]),
     "predeparture_v2_monthcyc": dict(numeric=list(_V2), encoder="frequency", cyclic=["month"]),
@@ -642,6 +648,9 @@ def model_specs(args):
     # missed delay cost as much as a false alarm. AUC is barely affected; F1 and
     # the confusion matrix become meaningful.
     clf_w = {"weightCol": WEIGHT_COL} if args.class_weight == "balanced" else {}
+    # Tree seeds: 7 as always at the default seed, so earlier runs reproduce;
+    # another --seed varies them too, for the noise floor.
+    mseed = 7 if args.seed == SPLIT_SEED else args.seed
 
     lr = LinearRegression(featuresCol="features", labelCol=REG_LABEL,
                           elasticNetParam=0.5, regParam=0.1, maxIter=50)
@@ -693,7 +702,7 @@ def model_specs(args):
               .build()))
 
     rfr = RandomForestRegressor(featuresCol="features", labelCol=REG_LABEL,
-                                numTrees=40, maxDepth=8, maxBins=64, seed=7)
+                                numTrees=40, maxDepth=8, maxBins=64, seed=mseed)
     grid["random_forest_regressor"] = dict(
         estimator=rfr, task="regression", label=REG_LABEL,
         grid=(ParamGridBuilder()
@@ -702,7 +711,7 @@ def model_specs(args):
               .build()))
 
     rfc = RandomForestClassifier(featuresCol="features", labelCol=CLF_LABEL,
-                                 numTrees=40, maxDepth=8, maxBins=64, seed=7, **clf_w)
+                                 numTrees=40, maxDepth=8, maxBins=64, seed=mseed, **clf_w)
     grid["random_forest_classifier"] = dict(
         estimator=rfc, task="classification", label=CLF_LABEL,
         grid=(ParamGridBuilder()
@@ -711,7 +720,7 @@ def model_specs(args):
               .build()))
 
     gbtr = GBTRegressor(featuresCol="features", labelCol=REG_LABEL,
-                        maxIter=40, maxDepth=5, maxBins=64, seed=7)
+                        maxIter=40, maxDepth=5, maxBins=64, seed=mseed)
     grid["gbt_regressor"] = dict(
         estimator=gbtr, task="regression", label=REG_LABEL,
         grid=(ParamGridBuilder()
@@ -720,7 +729,7 @@ def model_specs(args):
               .build()))
 
     gbtc = GBTClassifier(featuresCol="features", labelCol=CLF_LABEL,
-                         maxIter=40, maxDepth=5, maxBins=64, seed=7, **clf_w)
+                         maxIter=40, maxDepth=5, maxBins=64, seed=mseed, **clf_w)
     grid["gbt_classifier"] = dict(
         estimator=gbtc, task="classification", label=CLF_LABEL,
         grid=(ParamGridBuilder()
@@ -757,7 +766,8 @@ def hash_sample(df, fraction: float, salt: int):
     return df.filter(h < F.lit(int(round(fraction * 1_000_000))))
 
 
-def make_split(df, sample_fraction: float = 1.0, mode: str = DEFAULT_SPLIT):
+def make_split(df, sample_fraction: float = 1.0, mode: str = DEFAULT_SPLIT,
+               seed: int = SPLIT_SEED):
     """The single definition of the train/test split.
 
     Anything that needs the *same* test rows as the tournament - the residual
@@ -776,16 +786,19 @@ def make_split(df, sample_fraction: float = 1.0, mode: str = DEFAULT_SPLIT):
 
     mode="random": the old row-level randomSplit, to reproduce earlier runs. It
     depends on the read partitioning (CLAUDE.md section 4).
+
+    seed: a different seed draws a different sample and different test days,
+    which is how the noise floor of a comparison is measured (--seed).
     """
     if mode == "random":
         if sample_fraction < 1.0:
-            df = df.sample(False, sample_fraction, seed=SPLIT_SEED)
-        return df.randomSplit([0.8, 0.2], seed=SPLIT_SEED)
+            df = df.sample(False, sample_fraction, seed=seed)
+        return df.randomSplit([0.8, 0.2], seed=seed)
     if mode != "day":
         raise ValueError(f"unknown split mode {mode!r}; expected one of {SPLIT_MODES}")
     if sample_fraction < 1.0:
-        df = hash_sample(df, sample_fraction, SPLIT_SEED)
-    in_test = (F.col("MONTH") * 100 + F.col("DAY")).isin(test_days())
+        df = hash_sample(df, sample_fraction, seed)
+    in_test = (F.col("MONTH") * 100 + F.col("DAY")).isin(test_days(seed))
     return df.filter(~in_test), df.filter(in_test)
 
 
@@ -799,8 +812,17 @@ def evaluators(task: str, label: str):
             labelCol=label, rawPredictionCol="rawPrediction", metricName="areaUnderROC"),
         "areaUnderPR": BinaryClassificationEvaluator(
             labelCol=label, rawPredictionCol="rawPrediction", metricName="areaUnderPR"),
+        # Spark's "f1" is weighted over both classes, so with 89% on time the
+        # all-negative baseline already scores 0.84. The late class is the one
+        # that matters: its own precision and recall at the model's threshold.
         "f1": MulticlassClassificationEvaluator(
             labelCol=label, predictionCol="prediction", metricName="f1"),
+        "precision_late": MulticlassClassificationEvaluator(
+            labelCol=label, predictionCol="prediction", metricName="precisionByLabel",
+            metricLabel=1.0),
+        "recall_late": MulticlassClassificationEvaluator(
+            labelCol=label, predictionCol="prediction", metricName="recallByLabel",
+            metricLabel=1.0),
         "accuracy": MulticlassClassificationEvaluator(
             labelCol=label, predictionCol="prediction", metricName="accuracy"),
     }
@@ -813,6 +835,10 @@ def evaluators(task: str, label: str):
 # arm 12 throws away everything: results were only written after the whole loop
 # finished, and any exception propagated out and killed the run. Three
 # independent protections, so a crash costs one arm rather than an afternoon.
+
+
+# What a param missing from an older run meant at the time it ran.
+_PARAM_DEFAULTS = {"split": "random", "seed": str(SPLIT_SEED)}
 
 
 def completed_arms(experiment: str, match: dict | None = None) -> dict:
@@ -844,7 +870,7 @@ def completed_arms(experiment: str, match: dict | None = None) -> dict:
                 continue
             if r.info.status != "FINISHED":
                 continue
-            if match and any(r.data.params.get(k, "random" if k == "split" else None) != str(v)
+            if match and any(r.data.params.get(k, _PARAM_DEFAULTS.get(k)) != str(v)
                              for k, v in match.items()):
                 continue
             done[run_name] = dict(
@@ -862,7 +888,7 @@ def completed_arms(experiment: str, match: dict | None = None) -> dict:
 def resume_match(args) -> dict:
     """The logged params an earlier arm must share to be skipped on resume."""
     return {"feature_set": args.feature_set, "split": args.split,
-            "sample_fraction": args.sample_fraction}
+            "sample_fraction": args.sample_fraction, "seed": args.seed}
 
 
 def checkpoint(results: dict, failures: dict, out_dir: str = BENCH_DIR) -> None:
@@ -925,7 +951,7 @@ def cv_checkpoint_key(args) -> dict:
             "pca_variance": args.pca_variance, "pca_k": args.pca_k,
             "pca_scope": args.pca_scope,
             "class_weight": args.class_weight, "experiment": args.experiment,
-            "split": args.split}
+            "split": args.split, "seed": args.seed}
 
 
 def load_cv_checkpoint(args, run_name: str):
@@ -979,7 +1005,7 @@ def log_baselines(train, test, n_test: int, args) -> dict:
                                "label": label, "feature_set": args.feature_set,
                                "baseline": note, "test_rows": n_test,
                                "sample_fraction": args.sample_fraction,
-                               "split": args.split})
+                               "split": args.split, "seed": args.seed})
             mlflow.log_metrics(metrics)
         out[run_name] = dict(metrics, model=f"baseline_{task}", arm="none", task=task)
         print(f"  baseline {task:<14} " + "  ".join(f"{k}={v:.4f}" for k, v in metrics.items())
@@ -1014,7 +1040,7 @@ def log_baselines(train, test, n_test: int, args) -> dict:
                                    "feature_set": args.feature_set, "baseline": note,
                                    "test_rows": n_test,
                                    "sample_fraction": args.sample_fraction,
-                                   "split": args.split})
+                                   "split": args.split, "seed": args.seed})
                 mlflow.log_metrics(metrics)
             out[run_name] = dict(metrics, model=f"rule_{col.lower()}_{task}", arm="none",
                                  task=task)
@@ -1031,6 +1057,9 @@ def main() -> None:
     ap.add_argument("--tune-fraction", type=float, default=0.1,
                     help="fraction of TRAIN used for cross-validation search")
     ap.add_argument("--folds", type=int, default=5)
+    ap.add_argument("--seed", type=int, default=SPLIT_SEED,
+                    help="sample, test days, tuning sample, CV folds and tree seeds; "
+                         "change it to measure run-to-run noise")
     ap.add_argument("--split", default=DEFAULT_SPLIT, choices=SPLIT_MODES,
                     help="day: 20%% of the days of every month are test (default); "
                          "random: the old row-level randomSplit")
@@ -1163,7 +1192,7 @@ def main() -> None:
         # With --split random, randomSplit assigns rows from the input's existing
         # partitioning; a projection after it is a narrow transformation and
         # leaves it unchanged, which scripts/check_split.py asserts.
-        train, test = make_split(df, args.sample_fraction, args.split)
+        train, test = make_split(df, args.sample_fraction, args.split, args.seed)
         # Rotation and congestion lookups, joined after the split so the rows in
         # each half do not move. A no-op for feature sets that use neither.
         numeric = FEATURE_SETS[args.feature_set]["numeric"]
@@ -1219,9 +1248,9 @@ def main() -> None:
         # is many hours, and the ranking of hyperparameters is stable well
         # before the metric value is.
         tune = (train if args.tune_fraction >= 1.0
-                else (hash_sample(train, args.tune_fraction, SPLIT_SEED + 1)
+                else (hash_sample(train, args.tune_fraction, args.seed + 1)
                       if args.split == "day"
-                      else train.sample(False, args.tune_fraction, seed=SPLIT_SEED)).cache())
+                      else train.sample(False, args.tune_fraction, seed=args.seed)).cache())
         n_tune = tune.count()
         print(f"tuning on {n_tune:,} rows ({args.tune_fraction:.1%} of train)\n")
 
@@ -1294,7 +1323,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                     # Evaluate grid points concurrently across executor slots
                     # rather than one after another.
                     parallelism=args.parallelism,
-                    seed=SPLIT_SEED,
+                    seed=args.seed,
                     collectSubModels=False)
 
                 with mlflow.start_run(run_name=run_name):
@@ -1313,7 +1342,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                         "tune_rows": n_tune, "train_rows": n_train,
                         "test_rows": n_test, "grid_size": len(spec["grid"]),
                         "sample_fraction": args.sample_fraction,
-                        "split": args.split,
+                        "split": args.split, "seed": args.seed,
                     "max_dep_delay": args.max_dep_delay if args.max_dep_delay is not None else "",
                     })
                     if args.note:

@@ -242,9 +242,59 @@ def classification_plots(preds, label: str, n_test: int, metrics: dict, title: s
              "fpr": fpr[keep].round(5).tolist(), "tpr": tpr[keep].round(5).tolist(),
              "recall": rec[keep_pr].round(5).tolist(),
              "precision": prec[keep_pr].round(5).tolist(),
-             "confusion": cm.tolist()}
+             "confusion": cm.tolist(),
+             "capture": capture_table(y, s)}
     _dump(curve, out_dir, f"{stem}_curves.json", logged)
+    _log_metrics({f"recall_at_{int(r['flagged'] * 100)}pct": r["recall"]
+                  for r in curve["capture"]}
+                 | {f"precision_at_{int(r['flagged'] * 100)}pct": r["precision"]
+                    for r in curve["capture"]})
     return curve
+
+
+CAPTURE_SHARES = (0.05, 0.10, 0.20)
+
+
+def capture_table(y, s, shares=CAPTURE_SHARES) -> list[dict]:
+    """Flag the top share of flights by score: how many late ones does that catch?
+
+    The operational reading of a ranking: a dispatcher can look at 10% of the
+    day's flights, not at a threshold. recall = share of the late flights caught,
+    precision = share of the flagged flights that were late.
+    """
+    order = np.argsort(-np.asarray(s), kind="stable")
+    y = np.asarray(y)[order]
+    total = max(y.sum(), 1)
+    out = []
+    for share in shares:
+        k = max(1, int(round(share * len(y))))
+        hit = float(y[:k].sum())
+        out.append({"flagged": share, "recall": float(hit / total), "precision": hit / k})
+    return out
+
+
+def error_bands(y, p) -> list[dict]:
+    """MAE by how late the flight actually was. R2 is dominated by the few very
+    late flights; this shows where the error in minutes actually sits."""
+    edges = [(-np.inf, 0, "early or on time"), (0, 15, "0 to 15"), (15, 30, "15 to 30"),
+             (30, 60, "30 to 60"), (60, 120, "60 to 120"), (120, np.inf, "over 120")]
+    out = []
+    for lo, hi, name in edges:
+        mask = (y > lo) & (y <= hi) if np.isfinite(lo) else (y <= hi)
+        if mask.any():
+            out.append({"band": name, "share": float(mask.mean()),
+                        "mae": float(np.abs(y[mask] - p[mask]).mean()),
+                        "bias": float((p[mask] - y[mask]).mean())})
+    return out
+
+
+def _log_metrics(values: dict) -> None:
+    try:
+        import mlflow
+        if mlflow.active_run():
+            mlflow.log_metrics({k: float(v) for k, v in values.items()})
+    except Exception as exc:  # noqa: BLE001 - never let bookkeeping stop a run
+        print(f"  (extra metrics not logged: {exc})")
 
 
 # ---------------------------------------------------------------------------
@@ -277,6 +327,11 @@ def regression_plots(preds, label: str, n_test: int, title: str,
     fig.suptitle(title, x=0.01, ha="left", color=INK, fontsize=12)
     fig.tight_layout()
     _save(fig, out_dir, f"{stem}_residuals.png", logged)
+    bands = error_bands(y, p)
+    _dump({"rows": int(len(y)), "mae": float(np.abs(r).mean()),
+           "median_ae": float(np.median(np.abs(r))), "bands": bands},
+          out_dir, f"{stem}_error_bands.json", logged)
+    _log_metrics({"median_ae": float(np.median(np.abs(r)))})
 
 
 # ---------------------------------------------------------------------------
