@@ -260,6 +260,33 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-28 · Kaggle G: hour alone and month alone as sin/cos (1%)
+
+Private kernel `buihuynhgiahuy/flight-delay-exp-hour-month-cyclic` (commit 7ce74b0, still
+the random split); output in `experiments/kaggle-hour-month-cyclic-20260928/results/`.
+`v2` reproduces runs A to F to four decimals. v2_cyclic (run A, E) changed both at once.
+
+| model | v2 | hour sin/cos only | month sin/cos only |
+|---|---|---|---|
+| GBT classifier AUC / PR | 0.832 / 0.634 | 0.833 / 0.635 | 0.829 / 0.633 |
+| RF classifier AUC / PR | 0.829 / 0.618 | 0.828 / 0.620 | 0.826 / 0.615 |
+| LinearSVC AUC / PR | 0.802 / 0.553 | 0.803 / 0.558 | 0.802 / 0.552 |
+| RF regressor R² | 0.282 | 0.284 | 0.282 |
+| GBT regressor R² | 0.280 | 0.277 | 0.263 * |
+| LinearRegression R² | 0.2455 | 0.2446 | 0.2453 |
+| GLM Poisson R² | 0.166 | 0.166 | 0.166 |
+
+\* maxBins 32 chosen by CV again (the run D / F artifact).
+
+- **Hour: one sin/cos pair replaces the 24-slot one-hot with no loss**, for the linear
+  models too (LinearSVC AUC-PR +0.005, LinearRegression −0.001). So run F's finding
+  (the linear models need DEP_HOUR) is about having the hour in a form they can bend,
+  not about the one-hot: sin/cos does it with 2 columns.
+- **Month as sin/cos: a tie leaning slightly worse** (RF classifier −0.002 AUC / −0.004
+  PR, GBT classifier −0.002). One-hot month is at least as good; the 12 slots are cheap.
+- Reading of A, E, G together: hour sin/cos is a free simplification; month is fine
+  either way; weekday adds nothing in any form.
+
 ### 2026-09-28 · Kaggle F: scheduled time of day, with and without (1%)
 
 Private kernel `buihuynhgiahuy/flight-delay-exp-sched-time` (commit 9552854); output in

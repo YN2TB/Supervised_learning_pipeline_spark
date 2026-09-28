@@ -121,4 +121,6 @@ before the next tournament. The next tournament waits for the team's visual EDA 
 - **Time of day:** keep both copies. Without either, every model loses (up to −0.019
   AUC). DEP_HOUR serves the linear models, SCHED_ARR_MIN the trees; adding
   SCHED_DEP_MIN changes nothing.
-- **Cyclical hour and month:** ties the one-hot; the team's call.
+- **Cyclical hour:** one sin/cos pair ties the 24-slot one-hot for every model, linear
+  included (run G). A free simplification; the team's call.
+- **Cyclical month:** a tie leaning slightly worse than its one-hot (run G). Keep one-hot.
