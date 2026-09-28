@@ -312,22 +312,40 @@ FEATURE_SETS = {
 }
 # Cyclical encoding (experiments/LOG.md, 2026-09-27): hour as one sin/cos pair
 # over the day (from SCHED_DEP_MIN, so minutes count, not just the hour), month as
-# two pairs (one pair cannot hold its two peaks: Feb and Jun-Jul). Weekday stays
-# one-hot: it has no smooth cycle, and two pairs would be 5 parameters for 7 levels.
-CYCLIC_COLS = ["hour_sin", "hour_cos", "month_sin1", "month_cos1", "month_sin2", "month_cos2"]
-CYCLIC_SQL = (
-    "SELECT *, "
-    "SIN(2 * PI() * SCHED_DEP_MIN / 1440.0) AS hour_sin, "
-    "COS(2 * PI() * SCHED_DEP_MIN / 1440.0) AS hour_cos, "
-    "SIN(2 * PI() * (MONTH - 1) / 12.0) AS month_sin1, "
-    "COS(2 * PI() * (MONTH - 1) / 12.0) AS month_cos1, "
-    "SIN(4 * PI() * (MONTH - 1) / 12.0) AS month_sin2, "
-    "COS(4 * PI() * (MONTH - 1) / 12.0) AS month_cos2 "
-    "FROM __THIS__")
+# two pairs (one pair cannot hold its two peaks: Feb and Jun-Jul), weekday as one
+# pair (tested 2026-09-28 against its one-hot). Each group replaces the one-hot
+# named last in its entry. `cyclic=True` in a feature set means hour and month.
+CYCLIC_GROUPS = {
+    "hour": (["hour_sin", "hour_cos"],
+             ["SIN(2 * PI() * SCHED_DEP_MIN / 1440.0)",
+              "COS(2 * PI() * SCHED_DEP_MIN / 1440.0)"], "DEP_HOUR"),
+    "month": (["month_sin1", "month_cos1", "month_sin2", "month_cos2"],
+              ["SIN(2 * PI() * (MONTH - 1) / 12.0)", "COS(2 * PI() * (MONTH - 1) / 12.0)",
+               "SIN(4 * PI() * (MONTH - 1) / 12.0)", "COS(4 * PI() * (MONTH - 1) / 12.0)"],
+              "MONTH"),
+    "dow": (["dow_sin", "dow_cos"],
+            ["SIN(2 * PI() * (DAY_OF_WEEK - 1) / 7.0)",
+             "COS(2 * PI() * (DAY_OF_WEEK - 1) / 7.0)"], "DAY_OF_WEEK"),
+}
+
+
+def cyclic_groups(spec: dict) -> list:
+    """The cyclical groups a feature set asks for, in CYCLIC_GROUPS order."""
+    want = spec.get("cyclic") or []
+    if want is True:
+        want = ["hour", "month"]
+    return [g for g in CYCLIC_GROUPS if g in want]
+
+
+def cyclic_sql(groups: list) -> str:
+    cols = [f"{expr} AS {name}" for g in groups
+            for name, expr in zip(CYCLIC_GROUPS[g][0], CYCLIC_GROUPS[g][1])]
+    return "SELECT *, " + ", ".join(cols) + " FROM __THIS__"
 
 # One change each against predeparture_final (experiments/FEATURE_DECISIONS.md,
 # anomalies 1, 3 and 4).
 _FINAL = FEATURE_SETS["predeparture_final"]["numeric"]
+_V2 = [c for c in _FINAL if c not in ("log_distance", "prev_air_gain")]
 FEATURE_SETS.update({
     "predeparture_final_zero": dict(numeric=list(_FINAL), encoder="frequency",
                                     first_leg_zero=True),
@@ -363,6 +381,20 @@ FEATURE_SETS.update({
     "predeparture_v2_cyclic": dict(numeric=[c for c in _FINAL
                                             if c not in ("log_distance", "prev_air_gain")],
                                    encoder="frequency", cyclic=True),
+    # Kaggle ablation, 2026-09-28. Weekday as a sin/cos pair instead of its one-hot,
+    # alone and on top of v2_cyclic (every calendar group cyclical).
+    "predeparture_v2_dowcyc": dict(numeric=list(_V2), encoder="frequency", cyclic=["dow"]),
+    "predeparture_v2_cyclic_dow": dict(numeric=list(_V2), encoder="frequency",
+                                       cyclic=["hour", "month", "dow"]),
+    # Scheduled time of day, one change each against v2: v2 carries it twice,
+    # departure hour as a one-hot and arrival minute as a number.
+    "predeparture_v2_nodephour": dict(numeric=list(_V2), encoder="frequency",
+                                      onehot=["MONTH", "DAY_OF_WEEK"]),
+    "predeparture_v2_noarr": dict(numeric=[c for c in _V2 if c != "SCHED_ARR_MIN"],
+                                  encoder="frequency"),
+    "predeparture_v2_notime": dict(numeric=[c for c in _V2 if c != "SCHED_ARR_MIN"],
+                                   encoder="frequency", onehot=["MONTH", "DAY_OF_WEEK"]),
+    "predeparture_v2_depmin": dict(numeric=list(_V2) + ["SCHED_DEP_MIN"], encoder="frequency"),
     # The same without the near-duplicates: prev_dep_delay (r 0.93 with
     # prev_arr_delay, which supersedes it once the inbound has landed) and
     # has_prev (r 0.62 with leg_of_day, nearly "not the first leg").
@@ -450,10 +482,12 @@ def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
 
     # AIRLINE is a string; the rest are already small integer codes.
     onehot_numeric = list(spec.get("onehot", ONEHOT_NUMERIC))
-    if spec.get("cyclic"):
-        stages.append(SQLTransformer(statement=CYCLIC_SQL))
-        numeric += CYCLIC_COLS
-        onehot_numeric = [c for c in onehot_numeric if c not in ("MONTH", "DEP_HOUR")]
+    groups = cyclic_groups(spec)
+    if groups:
+        stages.append(SQLTransformer(statement=cyclic_sql(groups)))
+        numeric += [c for g in groups for c in CYCLIC_GROUPS[g][0]]
+        replaced = {CYCLIC_GROUPS[g][2] for g in groups}
+        onehot_numeric = [c for c in onehot_numeric if c not in replaced]
 
     stages.append(StringIndexer(inputCol="AIRLINE", outputCol="airline_idx",
                                 handleInvalid="keep"))
