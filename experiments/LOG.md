@@ -321,7 +321,7 @@ late does it arrive"; it does not predict cancellations.
 
 **Day split against random split:** the day-split levels (seed 42: GBT AUC 0.824) sit
 inside the seed-to-seed range, so the change of split is not measurable at 1%. The test
-days of seed 42 happen to be later than average (13.0% severe vs 11.1%).
+days of seed 42 happen to be more delayed than average (13.0% severe vs 11.1%).
 
 ### 2026-09-28 · Kaggle G: hour alone and month alone as sin/cos (1%)
 
