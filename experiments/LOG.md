@@ -260,6 +260,33 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-29 · Kaggle K: is DISTANCE needed next to log_distance? (1%, day split, seed 42)
+
+Kernel `flight-delay-check-gain3` (commit 914a794); output in
+`experiments/kaggle-check-gain3-20260929/`. The team asked why keep DISTANCE when
+log_distance is there.
+
+| model | plus (all four) | without DISTANCE | without log_distance, sched_mph |
+|---|---|---|---|
+| LinearRegression R² / RMSE | **0.475 / 9.73** | 0.469 / 9.78 | 0.469 / 9.78 |
+| GBT R² / RMSE | **0.445 / 10.00** | **0.445 / 10.00** (identical) | 0.429 / 10.14 |
+| RF R² | 0.416 | 0.415 | 0.405 |
+| physics reference R² / RMSE | 0.330 / 10.99 | | |
+
+- **GBT is identical to four decimals without DISTANCE**: a log is monotonic, so a tree
+  splits DISTANCE and log_distance at the same flights. Proven, not argued.
+- **LinearRegression needs DISTANCE** (−0.006 R² without it, twice the paired noise):
+  air time grows roughly linearly with distance, which a linear model cannot build from
+  a log. Without DISTANCE it falls back exactly to the run-J `cong` score (0.4688), so
+  SCHEDULED_TIME adds nothing for the linear models once sched_mph is there, while it is
+  what the trees gain from (+0.017 GBT from cong to plus).
+- `gain_nolog` reproduces run J's `phys` to four decimals: the hash sample and day split
+  give identical results across kernels.
+- **Decided: `wheelsoff_gain_plus`** for the tournament. Each of the four columns serves
+  a model family the others do not.
+- The fixed physics reference behaves (R² 0.33, RMSE 10.99 at 1%); every model beats it.
+- Merged into the main mlflow.db with `scripts/merge_kaggle_runs.py`.
+
 ### 2026-09-29 · Kaggle J: the gain task's distance columns (1%, day split, seed 42)
 
 Kernel `flight-delay-check-gain2` (commit 9734cda); output in
