@@ -1,0 +1,21 @@
+{
+  "key": {
+    "feature_set": "wheelsoff_gain_cap120",
+    "sample_fraction": 0.01,
+    "tune_fraction": 0.5,
+    "folds": 2,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "pca_scope": "all",
+    "class_weight": "balanced",
+    "experiment": "kg-gain_cap120",
+    "split": "day",
+    "seed": 42
+  },
+  "best_params": {
+    "maxDepth": 4,
+    "maxBins": 64
+  },
+  "primary": "rmse",
+  "value": 10.008761322069047
+}

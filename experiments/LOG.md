@@ -260,6 +260,30 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-29 · Kaggle L: DEPARTURE_DELAY in the gain task (1%, day split, seed 42)
+
+Kernel `flight-delay-check-cap` (commit 19f778a); output in
+`experiments/kaggle-check-cap-20260929/`. The team asked whether to cap the departure
+delay at two hours, and whether it should be dropped because the target is defined with it.
+
+| model | plus | DEPARTURE_DELAY capped at 120 | without DEPARTURE_DELAY | flights > 120 min removed (other scope) |
+|---|---|---|---|---|
+| LinearRegression R² / RMSE | 0.4745 / 9.73 | 0.4745 / 9.73 | 0.4743 / 9.73 | 0.4736 / 9.67 |
+| GBT R² / RMSE | 0.4445 / 10.00 | 0.4437 / 10.01 | 0.4470 / 9.98 | 0.4411 / 9.97 |
+| RF R² / RMSE | 0.4161 / 10.26 | 0.4157 / 10.26 | 0.4164 / 10.25 | 0.4189 / 10.16 |
+| R² on the arrival scale (LR) | 0.943 | 0.943 | 0.943 | **0.858** |
+
+- **All three are ties** (within ±0.003). On the gain target DEPARTURE_DELAY carries
+  nothing (r 0.009), so capping it or dropping it changes nothing. By the tie rule the
+  set without it is the simpler one; the reason to give is "no measurable contribution",
+  not "it is in the target's definition" (SCHEDULED_TIME is too, and it is known).
+- **Removing the flights over two hours** leaves the gain predictions as they were (RMSE
+  9.67 against 9.73) but drops the arrival-scale R² from 0.943 to 0.858, the same effect
+  as the wheels-off audit: the arrival R² was inflated by the departure-delay tail's
+  variance, not by better predictions.
+- The full tournament's task B runs `wheelsoff_gain_plus` (with DEPARTURE_DELAY); a tie,
+  so it stands. Dropping the column would take a one-hour rerun of task B.
+
 ### 2026-09-29 · Kaggle K: is DISTANCE needed next to log_distance? (1%, day split, seed 42)
 
 Kernel `flight-delay-check-gain3` (commit 914a794); output in
