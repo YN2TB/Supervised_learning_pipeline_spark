@@ -260,6 +260,75 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+## 2026-09-29 · The three-task tournament (full data, day split)
+
+Experiments `flight-delay-v3` (tasks A and C, `predeparture_v3`, 14 arms) and
+`flight-delay-gain` (task B, `wheelsoff_gain_plus`, 8 arms); results, tables and plots in
+`docs/benchmarks/flight-delay-v3/` and `docs/benchmarks/flight-delay-gain/`. Train
+4,581,859 flights, test 1,122,141 (72 test days), tuning on 10% of train, 5 folds,
+`--no-register` (registry untouched, v4 wheels-off still Production). Backup before the
+run: `backup_pre_3task_20260929_060205/`.
+
+**A. Regression before departure** (label_delay, minutes):
+
+| model | MAE | median AE | RMSE | R² |
+|---|---|---|---|---|
+| GBT, no PCA | **16.09** | 9.68 | 33.70 | **0.363** |
+| RF, no PCA | 16.17 | 9.77 | 33.86 | 0.357 |
+| GBT, PCA | 16.41 | 10.04 | 34.04 | 0.351 |
+| RF, PCA | 16.96 | 10.68 | 34.66 | 0.327 |
+| LinearRegression = GLM Gaussian, no PCA | 17.52 | 11.15 | 35.67 | 0.287 |
+| LinearRegression = GLM Gaussian, PCA | 17.43 | 10.97 | 35.78 | 0.282 |
+| rule on prev_arr_delay | 18.59 | | 37.32 | 0.219 |
+| training mean | 22.21 | | 42.32 | 0.00 |
+
+**C. Classification before departure** (label_severe, 12.75% of test flights):
+
+| model | caught / right when flagging 10% | precision / recall at threshold | AUC | AUC-PR |
+|---|---|---|---|---|
+| GBT, no PCA | **52.8% / 67.5%** | 0.43 / 0.67 | **0.848** | **0.662** |
+| RF, no PCA | 52.4% / 67.0% | 0.49 / 0.62 | 0.844 | 0.654 |
+| GBT, PCA | 50.9% / 65.0% | 0.43 / 0.65 | 0.837 | 0.635 |
+| RF, PCA | 48.7% / 62.1% | 0.50 / 0.56 | 0.820 | 0.603 |
+| LinearSVC, no PCA / PCA | 48.3% / 61.7%, 48.5% / 61.9% | 0.49 / 0.57, 0.55 / 0.52 | 0.811 / 0.808 | 0.576 / 0.578 |
+| rule on prev_arr_delay | | 0.79 / 0.35 | 0.761 | 0.507 |
+| all negative | | | 0.500 | 0.128 |
+
+**B. Regression at wheels-off** (label_gain = label_delay − DEPARTURE_DELAY):
+
+| model | MAE | RMSE | R² on the gain | R² on the arrival scale |
+|---|---|---|---|---|
+| GBT, no PCA | **6.59** | **9.62** | **0.480** | 0.948 |
+| LinearRegression = GLM Gaussian, no PCA | 6.66 | 9.68 | 0.473 | 0.947 |
+| **physics reference** | 6.88 | 9.86 | 0.453 | 0.946 |
+| RF, no PCA | 7.01 | 10.05 | 0.432 | 0.943 |
+| GBT, PCA | 7.33 | 10.37 | 0.395 | 0.940 |
+| RF, PCA | 7.55 | 10.62 | 0.366 | 0.937 |
+| LinearRegression = GLM Gaussian, PCA | 7.59 | 10.67 | 0.360 | 0.936 |
+| mean of the gain | 9.23 | 13.35 | 0.00 | **0.900** |
+
+Reading:
+- **No leak signs.** A and C sit where the 1% checks put them (R² 0.36, AUC 0.85), a
+  clear step above the one-column rule (+0.14 R², +0.09 AUC). B's arrival-scale R² 0.948
+  is 0.900 free (departure delay plus the average gain) and 0.05 from the model.
+- **Task B only just beats physics.** GBT and the linear models clear the physics
+  reference (RMSE 9.62 and 9.68 against 9.86); RF and every PCA arm do not. The reference
+  knows each route's mean airborne time in each month and hour, which the model has to
+  rebuild from distance and coordinates. That is the honest ceiling of this feature set.
+- **PCA costs little in A and C, a lot in B.** A: −0.01 R² for the trees, a tie for the
+  linear models; C: −0.01 to −0.02 AUC. B: −0.08 to −0.11 R² on the gain for every model,
+  as predicted from the spectrum: the schedule padding lives in the two smallest
+  components (0.1% and 0.0% of the variance), which a 90% cut drops. Low variance is not
+  low importance; PCA does not look at the target.
+- **GLM Gaussian = LinearRegression** to four decimals in every arm (both least squares).
+- **Cost:** PCA arms fitted through the Python-side RowMatrixPCA took 1.6 to 2 h each (A
+  and C); B used the JVM PCA added mid-run (`46007a0`, identical components) and its PCA
+  arms took 2 to 20 min.
+- **Incidents:** 8g heap ran out on RF regressor's refit (07:36); the laptop went into
+  Modern Standby at 07:50 and killed the Python workers on wake; the run window was
+  closed by hand once (13:2x); B's RF refit also ran out of a 10g heap and finished with
+  12g and parallelism 1. Every resume picked up exactly the missing arms.
+
 ### 2026-09-29 · Kaggle L: DEPARTURE_DELAY in the gain task (1%, day split, seed 42)
 
 Kernel `flight-delay-check-cap` (commit 19f778a); output in
