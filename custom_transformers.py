@@ -743,6 +743,8 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
         centre = bool(self.getOrDefault(self.centre))
         threshold = float(self.getOrDefault(self.varianceThreshold))
         sc = dataset.sparkSession.sparkContext
+        if mode == "jvm":
+            return self._fit_jvm(dataset, in_col, k, threshold, sc)
         if threshold > 0:
             # Choosing k by explained variance needs the whole spectrum, and the
             # eigs modes can only return k < n components. local-svd decomposes
@@ -798,6 +800,33 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
                 work.unpersist()
 
         ratios = [(x * x / trace) if trace > 0 else 0.0 for x in sing]
+        return self._cut_and_build(sc, ratios, V, k, threshold, in_col,
+                                   f"mode={mode} centred={centre}")
+
+    def _fit_jvm(self, dataset, in_col, k, threshold, sc):
+        """svdMode="jvm": spark.ml's own PCA, every row staying in the JVM.
+
+        The paths above send each row through Python (an RDD of mllib vectors,
+        centred in Python), which made a PCA arm of the full tournament take 1.6
+        to 2 hours against 10 to 12 minutes without PCA (2026-09-29). spark.ml's
+        PCA computes the covariance in the JVM, centred, and returns the same
+        components (|cos| = 1.0, explained variance to five decimals; checked
+        against local-svd in scripts/test_transformers.py). It forms the n x n
+        covariance on the driver, 12 x 12 here, which the brief's wording
+        advised against; the team chose speed over the brief's letter.
+        """
+        from pyspark.ml.feature import PCA
+        n = int(dataset.select(in_col).first()[0].size)
+        full = PCA(k=n if threshold > 0 else min(k, n), inputCol=in_col,
+                   outputCol=self.uid + "_tmp").fit(dataset)
+        ratios = [float(x) for x in full.explainedVariance.toArray()]
+        V = full.pc.toArray()
+        return self._cut_and_build(sc, ratios, V, k, threshold, in_col, "mode=jvm")
+
+    def _cut_and_build(self, sc, ratios, V, k, threshold, in_col, how):
+        from pyspark.ml.common import _py2java
+        from pyspark.ml.feature import PCAModel
+        from pyspark.ml.linalg import DenseMatrix, DenseVector
         if threshold > 0:
             # Fewest components whose cumulative share reaches the threshold. If
             # the spectrum never gets there (rank-deficient input: computeSVD
@@ -810,7 +839,7 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
         ev = DenseVector(ratios[:k])
         V = V[:, :k]
         pc = DenseMatrix(V.shape[0], k, V.flatten(order="F").tolist(), False)
-        print(f"  (RowMatrixPCA: mode={mode} k={k} centred={centre} "
+        print(f"  (RowMatrixPCA: {how} k={k} "
               f"retained={float(sum(ev.toArray())):.4f})")
 
         java_model = sc._jvm.org.apache.spark.ml.feature.PCAModel(

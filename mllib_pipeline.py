@@ -544,7 +544,7 @@ def _predeparture_stages(numeric: list) -> list:
 
 
 def build_feature_stages(label_col: str, use_pca: bool, pca_k: int,
-                         svd_mode: str = "local-eigs",
+                         svd_mode: str = "jvm",
                          feature_set: str = DEFAULT_FEATURE_SET,
                          pca_variance: float = 0.0,
                          pca_scope: str = "all"):
@@ -1225,8 +1225,11 @@ def main() -> None:
                          "numeric columns, keeping the one-hot groups as they are")
     ap.add_argument("--pca-k", type=int, default=None,
                     help="fixed number of PCA components (overrides --pca-variance)")
-    ap.add_argument("--svd-mode", default="local-eigs",
-                    choices=["auto", "local-svd", "local-eigs", "dist-eigs"],
+    # "jvm" (spark.ml's PCA, no row through Python) is the default since
+    # 2026-09-29: same components, minutes instead of hours per PCA arm. The
+    # computeSVD modes stay for the report's comparison and the registered model.
+    ap.add_argument("--svd-mode", default="jvm",
+                    choices=["jvm", "auto", "local-svd", "local-eigs", "dist-eigs"],
                     help="RowMatrix.computeSVD mode for the PCA arms. dist-eigs is "
                          "the mode the brief describes - ARPACK Lanczos on distributed "
                          "A^T(Av) products, never materialising the n x n covariance - "
