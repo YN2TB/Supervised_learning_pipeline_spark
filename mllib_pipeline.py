@@ -452,6 +452,13 @@ FEATURE_SETS.update({
         numeric=_GAIN + ["DISTANCE", "SCHEDULED_TIME", "sched_dest_hour"],
         encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
         tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    # wheelsoff_gain_plus with DEPARTURE_DELAY capped at 120 min (team's question,
+    # 2026-09-29).
+    "wheelsoff_gain_cap120": dict(
+        numeric=["dep_delay_cap120" if c == "DEPARTURE_DELAY" else c for c in _GAIN]
+        + ["DISTANCE", "SCHEDULED_TIME", "sched_dest_hour"],
+        encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
+        tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
     # One change each against wheelsoff_gain_plus: without DISTANCE (a tree splits
     # log_distance and DISTANCE identically; only a linear model can tell them
     # apart), and without the transformed pair (log_distance, sched_mph).
@@ -527,6 +534,12 @@ def _predeparture_stages(numeric: list) -> list:
         # Plain SQL, no Haversine UDF.
         stages.append(SQLTransformer(
             statement="SELECT *, DISTANCE / (SCHEDULED_TIME / 60.0) AS sched_mph FROM __THIS__"))
+    if "dep_delay_cap120" in numeric:
+        # DEPARTURE_DELAY capped at two hours, a fixed common-sense bound, not a
+        # fitted fence. The raw column stays in the frame: the gain target and the
+        # arrival-scale R2 add the real departure delay back.
+        stages.append(SQLTransformer(
+            statement="SELECT *, LEAST(DEPARTURE_DELAY, 120) AS dep_delay_cap120 FROM __THIS__"))
     log_pairs = [(src, dst) for src, dst in zip(LOG_COLS, LOG_OUT) if dst in numeric]
     if log_pairs:
         stages.append(SignedLog1pTransformer(inputCols=[s for s, _ in log_pairs],
