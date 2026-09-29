@@ -840,7 +840,74 @@ def model_specs(args):
               .addGrid(gbtc.maxDepth, [4, 6])
               .build()))
 
+    if getattr(args, "search", "grid") == "wide":
+        widen_search(grid, args)
     return grid
+
+
+# Hyperparameter search, --search wide (2026-09-29). The default grids have two values
+# per parameter, and in the three-task tournament every tree model picked the largest
+# value of every parameter in every task: the optimum is likely outside them. The wide
+# search covers the parameters that were fixed (GBT learning rate, number of trees,
+# row and feature subsampling, leaf size; RF leaf size, feature subset, bootstrap
+# fraction, impurity; linear loss and penalty mix). The linear models get the full
+# grid (a fit takes seconds); the trees get a seeded random sample of their space,
+# which with the same budget finds as good or better points than a grid, because it
+# does not spend fits on parameters that matter little (Bergstra and Bengio 2012).
+# The old best point is always included, so the wide search can only match or beat it.
+WIDE_TREE_SAMPLES = {"gbt": 12, "rf": 8}
+
+
+def _sample_maps(space: dict, n: int, seed: int, must: dict) -> list:
+    import itertools
+    import random
+    keys = list(space)
+    combos = [dict(zip(keys, v)) for v in itertools.product(*space.values())]
+    rng = random.Random(seed)
+    others = [c for c in combos if c != must]
+    return [must] + rng.sample(others, min(n - 1, len(others)))
+
+
+def widen_search(grid: dict, args) -> None:
+    seed = getattr(args, "seed", SPLIT_SEED)
+    for name, spec in grid.items():
+        est = spec["estimator"]
+        p = est.getParam
+        maps = []
+        if name == "linear_regression":
+            for reg in (0.001, 0.01, 0.1, 1.0):
+                for mix in (0.0, 0.5, 1.0):
+                    maps.append({p("regParam"): reg, p("elasticNetParam"): mix,
+                                 p("loss"): "squaredError"})
+                # Spark's Huber loss supports an L2 penalty only.
+                maps.append({p("regParam"): reg, p("elasticNetParam"): 0.0,
+                             p("loss"): "huber"})
+        elif name in ("glm_gaussian_identity", "glm_poisson_log", "linear_svc"):
+            maps = [{p("regParam"): reg} for reg in (0.001, 0.01, 0.1, 1.0)]
+        elif name.startswith("gbt_"):
+            space = {"maxIter": (40, 80, 150), "stepSize": (0.05, 0.1, 0.2),
+                     "maxDepth": (6, 8, 10), "subsamplingRate": (0.7, 1.0),
+                     "minInstancesPerNode": (1, 50),
+                     "featureSubsetStrategy": ("all", "onethird")}
+            must = {"maxIter": 40, "stepSize": 0.1, "maxDepth": 6, "subsamplingRate": 1.0,
+                    "minInstancesPerNode": 1, "featureSubsetStrategy": "all"}
+            maps = [{p(k): v for k, v in m.items()} | {p("maxBins"): 64}
+                    for m in _sample_maps(space, WIDE_TREE_SAMPLES["gbt"], seed, must)]
+        elif name.startswith("random_forest_"):
+            # maxDepth stays at 10: the random forest regressor's refit at depth 10
+            # already needed a 12g heap on this machine.
+            space = {"numTrees": (80, 150), "minInstancesPerNode": (1, 50),
+                     "featureSubsetStrategy": ("sqrt", "onethird", "all"),
+                     "subsamplingRate": (0.7, 1.0)}
+            must = {"numTrees": 80, "minInstancesPerNode": 1,
+                    "featureSubsetStrategy": "auto", "subsamplingRate": 1.0}
+            if name.endswith("classifier"):
+                space["impurity"] = ("gini", "entropy")
+                must["impurity"] = "gini"
+            maps = [{p(k): v for k, v in m.items()} | {p("maxDepth"): 10}
+                    for m in _sample_maps(space, WIDE_TREE_SAMPLES["rf"], seed, must)]
+        if maps:
+            spec["grid"] = maps
 
 
 def test_days(seed: int = SPLIT_SEED, share: float = TEST_DAY_SHARE) -> list:
@@ -1055,7 +1122,8 @@ def cv_checkpoint_key(args) -> dict:
             "pca_variance": args.pca_variance, "pca_k": args.pca_k,
             "pca_scope": args.pca_scope,
             "class_weight": args.class_weight, "experiment": args.experiment,
-            "split": args.split, "seed": args.seed}
+            "split": args.split, "seed": args.seed,
+            "search": getattr(args, "search", "grid")}
 
 
 def load_cv_checkpoint(args, run_name: str):
@@ -1227,6 +1295,10 @@ def main() -> None:
     ap.add_argument("--tune-fraction", type=float, default=0.1,
                     help="fraction of TRAIN used for cross-validation search")
     ap.add_argument("--folds", type=int, default=5)
+    ap.add_argument("--search", default="grid", choices=["grid", "wide"],
+                    help="grid: two values per parameter (the tournaments up to "
+                         "2026-09-29); wide: more parameters, full grid for the linear "
+                         "models and a seeded random sample for the trees")
     ap.add_argument("--seed", type=int, default=SPLIT_SEED,
                     help="sample, test days, tuning sample, CV folds and tree seeds; "
                          "change it to measure run-to-run noise")
@@ -1528,6 +1600,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                         "test_rows": n_test, "grid_size": len(spec["grid"]),
                         "sample_fraction": args.sample_fraction,
                         "split": args.split, "seed": args.seed,
+                        "search": args.search,
                     "max_dep_delay": args.max_dep_delay if args.max_dep_delay is not None else "",
                     })
                     if args.note:

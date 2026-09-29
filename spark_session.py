@@ -69,6 +69,9 @@ OFFICIAL_EXPERIMENTS = {
     # The three-task tournament (2026-09-29): A and C, then B.
     "flight-delay-v3": ("docs", "benchmarks", "flight-delay-v3"),
     "flight-delay-gain": ("docs", "benchmarks", "flight-delay-gain"),
+    # The same three tasks with --search wide.
+    "flight-delay-v3-wide": ("docs", "benchmarks", "flight-delay-v3-wide"),
+    "flight-delay-gain-wide": ("docs", "benchmarks", "flight-delay-gain-wide"),
 }
 
 
