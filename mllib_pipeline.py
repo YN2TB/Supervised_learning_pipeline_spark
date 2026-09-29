@@ -537,9 +537,11 @@ def _predeparture_stages(numeric: list) -> list:
     if "dep_delay_cap120" in numeric:
         # DEPARTURE_DELAY capped at two hours, a fixed common-sense bound, not a
         # fitted fence. The raw column stays in the frame: the gain target and the
-        # arrival-scale R2 add the real departure delay back.
+        # arrival-scale R2 add the real departure delay back. LEAST skips nulls, so
+        # a missing delay is kept null for the Imputer rather than turned into 120.
         stages.append(SQLTransformer(
-            statement="SELECT *, LEAST(DEPARTURE_DELAY, 120) AS dep_delay_cap120 FROM __THIS__"))
+            statement="SELECT *, CASE WHEN DEPARTURE_DELAY IS NULL THEN NULL "
+                      "ELSE LEAST(DEPARTURE_DELAY, 120) END AS dep_delay_cap120 FROM __THIS__"))
     log_pairs = [(src, dst) for src, dst in zip(LOG_COLS, LOG_OUT) if dst in numeric]
     if log_pairs:
         stages.append(SignedLog1pTransformer(inputCols=[s for s, _ in log_pairs],
