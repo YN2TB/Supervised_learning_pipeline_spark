@@ -459,6 +459,14 @@ FEATURE_SETS.update({
         + ["DISTANCE", "SCHEDULED_TIME", "sched_dest_hour"],
         encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
         tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    # wheelsoff_gain_plus without DEPARTURE_DELAY at all: its r with the gain is
+    # 0.009, so the tie rule may drop it (the argument "it is in the target's
+    # definition" is not a reason; SCHEDULED_TIME is too, and it is known).
+    "wheelsoff_gain_nodep": dict(
+        numeric=[c for c in _GAIN if c != "DEPARTURE_DELAY"]
+        + ["DISTANCE", "SCHEDULED_TIME", "sched_dest_hour"],
+        encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
+        tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
     # One change each against wheelsoff_gain_plus: without DISTANCE (a tree splits
     # log_distance and DISTANCE identically; only a linear model can tell them
     # apart), and without the transformed pair (log_distance, sched_mph).
