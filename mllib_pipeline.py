@@ -1433,6 +1433,11 @@ def main() -> None:
                    else "interrupted (Ctrl+C)")
             print(f"\n{how}. {len(results)} result(s) kept in {args.out_dir}.")
             print(f"To continue: delete {PAUSE_FILE} if present, then rerun the same command.")
+            if isinstance(stop, SparkDied):
+                # A dead JVM is a failure a wrapper should retry, not a clean
+                # exit: exit code 0 here once stopped an overnight run after
+                # one OOM with half the arms missing.
+                sys.exit(3)
             return
         _finish(results, args)
     finally:
