@@ -72,6 +72,8 @@ OFFICIAL_EXPERIMENTS = {
     # The same three tasks with --search wide.
     "flight-delay-v3-wide": ("docs", "benchmarks", "flight-delay-v3-wide"),
     "flight-delay-gain-wide": ("docs", "benchmarks", "flight-delay-gain-wide"),
+    # Task B without DEPARTURE_DELAY as a feature (the team's choice, 2026-09-30).
+    "flight-delay-gain-nodep": ("docs", "benchmarks", "flight-delay-gain-nodep"),
 }
 
 

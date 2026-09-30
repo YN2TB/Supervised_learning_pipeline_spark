@@ -188,8 +188,8 @@ TESTS = [
      "Hòa: với target gain cột này gần như không mang thông tin (r 0.009)",
      "kaggle-check-cap-20260929", "Kaggle 1%, chia theo ngày",
      kg("kaggle-check-cap-20260929"), "kg-gain_plus", "kg-gain_cap120", None, "reg"),
-    ("G8", "B", "Bỏ DEPARTURE_DELAY", "DEPARTURE_DELAY", "Nhóm quyết",
-     "Hòa; nó vẫn được dùng qua phép cộng arrival = DEPARTURE_DELAY + gain",
+    ("G8", "B", "Bỏ DEPARTURE_DELAY", "DEPARTURE_DELAY", "Bỏ",
+     "Hòa; gain phẳng theo nó (trung vị −6 phút ở mọi mức trễ). Vẫn dùng qua phép cộng arrival = DEPARTURE_DELAY + gain",
      "kaggle-check-cap-20260929", "Kaggle 1%, chia theo ngày",
      kg("kaggle-check-cap-20260929"), "kg-gain_plus", "kg-gain_nodep", None, "reg"),
 ]

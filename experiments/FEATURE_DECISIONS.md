@@ -133,3 +133,16 @@ before the next tournament. The next tournament waits for the team's visual EDA 
 - **Hour as sin/cos:** adopt; ties for the trees, LinearSVC better on all three seeds.
 - **Schedule only** (without prev_arr_delay, inbound_overrun): AUC 0.65 to 0.68 against
   0.80 to 0.82. The rotation features carry most of the score.
+
+### Decided 2026-09-30
+
+- **Task B drops DEPARTURE_DELAY as a feature** (`wheelsoff_gain_nodep`). The gain is flat
+  in it: median −6 min at every departure delay from on time to over 10 h late (full
+  data), r 0.009, and removing it ties (run L). It still enters the arrival prediction
+  through arrival = DEPARTURE_DELAY + predicted gain.
+- **No IQR clipping, caps only where the data shows saturation or a break.**
+  TAXI_OUT (B) adds about one minute of gain per minute of taxi up to 3 h: no cap.
+  inbound_overrun: the share of flights over 30 min late saturates at 99.7% from 30 min
+  (cap 60 tested for C); the mean delay rises about 1:1 up to 5 h and breaks after
+  (404 flights, 55% late; cap 300 tested for A). Kernels `flight-delay-check-cap60`,
+  `-cap300`.

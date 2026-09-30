@@ -486,6 +486,10 @@ FEATURE_SETS.update({
         + ["DISTANCE", "SCHEDULED_TIME", "sched_dest_hour"],
         encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
         tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    # The team's choice for task B (2026-09-30): wheelsoff_gain_plus without
+    # DEPARTURE_DELAY as a feature. The gain is flat in it (median -6 min at every
+    # departure delay, 0 to 10 h late); it still enters the arrival prediction
+    # through arrival = DEPARTURE_DELAY + predicted gain.
     # wheelsoff_gain_plus without DEPARTURE_DELAY at all: its r with the gain is
     # 0.009, so the tie rule may drop it (the argument "it is in the target's
     # definition" is not a reason; SCHEDULED_TIME is too, and it is known).
