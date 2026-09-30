@@ -1304,7 +1304,9 @@ def log_baselines(train, test, n_test: int, args) -> dict:
     # On the gain target a line on DEPARTURE_DELAY says nothing (r ~0.01); the
     # physics reference above is the bar there.
     rule_cols = [] if reg != REG_LABEL else ("DEPARTURE_DELAY", "prev_arr_delay")
-    for col in [c for c in rule_cols if c in numeric]:
+    # A capped column keeps its base in the frame; the rule reads the raw base.
+    present = set(numeric) | {base for base, _ in capped(numeric).values()}
+    for col in [c for c in rule_cols if c in present]:
         stats = train.agg(F.avg(col).alias("mx"), F.avg(REG_LABEL).alias("my"),
                           F.covar_samp(col, REG_LABEL).alias("cxy"),
                           F.var_samp(col).alias("vx")).first()
