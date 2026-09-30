@@ -744,7 +744,17 @@ class RowMatrixPCA(Estimator, HasInputCol, HasOutputCol, _RowMatrixPCAParams,
         threshold = float(self.getOrDefault(self.varianceThreshold))
         sc = dataset.sparkSession.sparkContext
         if mode == "jvm":
-            return self._fit_jvm(dataset, in_col, k, threshold, sc)
+            try:
+                return self._fit_jvm(dataset, in_col, k, threshold, sc)
+            except Exception as exc:  # noqa: BLE001
+                # breeze's SVD can fail to converge on a near-singular covariance
+                # (task B's four collinear distance/time columns on a small sample,
+                # 2026-09-30). The computeSVD route below handles that input; it is
+                # slower, and only taken when the fast route fails.
+                if "NotConverged" not in str(exc):
+                    raise
+                print("  (RowMatrixPCA: jvm route did not converge; using local-svd)")
+                mode = "local-svd"
         if threshold > 0:
             # Choosing k by explained variance needs the whole spectrum, and the
             # eigs modes can only return k < n components. local-svd decomposes
