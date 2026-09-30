@@ -163,6 +163,17 @@ TESTS = [
      "Gần không PCA cho model tuyến tính; cây vẫn tốt nhất khi không PCA",
      "kaggle-pca-20260927", "Kaggle 1%, chia ngẫu nhiên",
      kg("kaggle-pca-20260927"), "kg-v2", "kg-v2_pca_numeric", "pca", "both"),
+    ("K13a", "C (và A)", "Chặn trần độ trễ chuyến trước ở 60 phút",
+     "prev_arr_delay, inbound_overrun (trần 60)", "Dùng cho bài C",
+     "Từ 30 phút tỷ lệ trễ nặng bão hòa 99.7%; LinearSVC AUC-PR +0.029, cây hòa. "
+     "GBT regressor +0.018 là do CV đổi maxBins", "kaggle-check-cap60-20260930",
+     "Kaggle 1%, chia theo ngày",
+     kg("kaggle-check-cap60-20260930"), "kg-v3", "kg-v3_cap60", None, "both"),
+    ("K13b", "A", "Chặn trần độ trễ chuyến trước ở 300 phút",
+     "prev_arr_delay, inbound_overrun (trần 300)", "Dùng cho bài A",
+     "Trễ tăng khoảng 1:1 tới 5 tiếng rồi gãy; LinearRegression R² +0.0045, RF +0.0028, "
+     "GBT y hệt, classifier y hệt", "kaggle-check-cap300-20260930", "Kaggle 1%, chia theo ngày",
+     kg("kaggle-check-cap300-20260930"), "kg-v3", "kg-v3_cap300", None, "both"),
     ("G1", "B", "Bỏ tốc độ theo lịch", "sched_mph", "Giữ", "Mọi model tụt, model tuyến tính tụt mạnh",
      "kaggle-check-gain-20260929", "Kaggle 1%, chia theo ngày",
      kg("kaggle-check-gain-20260929"), "kg-gain", "kg-gain_nomph", None, "reg"),

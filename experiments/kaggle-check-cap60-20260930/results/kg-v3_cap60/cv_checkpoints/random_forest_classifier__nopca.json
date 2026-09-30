@@ -1,0 +1,22 @@
+{
+  "key": {
+    "feature_set": "predeparture_v3_cap60",
+    "sample_fraction": 0.01,
+    "tune_fraction": 0.5,
+    "folds": 2,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "pca_scope": "all",
+    "class_weight": "balanced",
+    "experiment": "kg-v3_cap60",
+    "split": "day",
+    "seed": 42,
+    "search": "grid"
+  },
+  "best_params": {
+    "maxDepth": 10,
+    "numTrees": 80
+  },
+  "primary": "areaUnderROC",
+  "value": 0.8315211336583731
+}

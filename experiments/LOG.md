@@ -260,6 +260,36 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+### 2026-09-30 · Kaggle M: capping the inbound delay at measured points (1%, day split, seed 42)
+
+Kernels `flight-delay-check-cap60` and `-cap300` (commit 0d996f1); outputs in
+`experiments/kaggle-check-cap{60,300}-20260930/`. The caps come from the full-data curve
+of inbound_overrun: the share of flights over 30 min late is 99.7% from 30 min on
+(saturation), and the mean delay rises about one minute per minute up to 5 h, then
+breaks (404 flights over 300 min, only 55% late). Both caps apply to prev_arr_delay and
+inbound_overrun.
+
+| model | v3 | cap 60 | cap 300 |
+|---|---|---|---|
+| LinearRegression R² / MAE | 0.3128 / 17.75 | 0.3194 / 17.57 | 0.3173 / 17.59 |
+| RF regressor R² / MAE | 0.3667 / 16.63 | 0.3651 / 16.65 | **0.3695 / 16.58** |
+| GBT regressor R² | 0.3446 | 0.3625 * | 0.3446 (identical) |
+| LinearSVC AUC / AUC-PR | 0.7977 / 0.5666 | **0.8020 / 0.5953** | 0.7977 / 0.5669 |
+| RF classifier AUC / AUC-PR | 0.8227 / 0.6173 | 0.8225 / 0.6216 | identical |
+| GBT classifier AUC / AUC-PR | 0.8259 / 0.6320 | 0.8255 / 0.6321 | identical |
+
+\* CV chose maxBins 64 with the cap and 32 without: the usual artifact.
+
+- **Classification (C): cap 60 helps the linear model a lot** (LinearSVC AUC-PR +0.029,
+  ten times the paired noise) and ties the trees. Above the saturation point the extra
+  minutes only pulled the separating hyperplane.
+- **Regression (A): both caps help the linear models** (+0.0045 to +0.0066 R², MAE −0.16
+  to −0.18); cap 300 also helps RF (+0.0028) where cap 60 costs it a little (−0.0016).
+  Cap 300 cuts only at the measured break, so it loses no real information.
+- The trees ignore a cap they never split beyond: GBT and every classifier are identical
+  to four decimals with cap 300.
+- Proposal: task C with cap 60, task A with cap 300 (each task its own set).
+
 ## 2026-09-29 · The three-task tournament (full data, day split)
 
 Experiments `flight-delay-v3` (tasks A and C, `predeparture_v3`, 14 arms) and
