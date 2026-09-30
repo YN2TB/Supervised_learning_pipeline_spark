@@ -74,6 +74,10 @@ OFFICIAL_EXPERIMENTS = {
     "flight-delay-gain-wide": ("docs", "benchmarks", "flight-delay-gain-wide"),
     # Task B without DEPARTURE_DELAY as a feature (the team's choice, 2026-09-30).
     "flight-delay-gain-nodep": ("docs", "benchmarks", "flight-delay-gain-nodep"),
+    # The final run: the chosen set of each task, wide search on the no-PCA arm.
+    "flight-delay-final-a": ("docs", "benchmarks", "flight-delay-final-a"),
+    "flight-delay-final-b": ("docs", "benchmarks", "flight-delay-final-b"),
+    "flight-delay-final-c": ("docs", "benchmarks", "flight-delay-final-c"),
 }
 
 

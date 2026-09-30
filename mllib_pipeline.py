@@ -446,6 +446,18 @@ FEATURE_SETS.update({
     "predeparture_v3_cap60": dict(
         numeric=[c + "_cap60" if c in ("prev_arr_delay", "inbound_overrun") else c for c in _V2],
         encoder="frequency", onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    # The final sets of the three tasks (2026-09-30, experiments/LOG.md run M):
+    # A regression with the inbound delay capped at its measured break (300 min),
+    # C classification capped at its saturation point (60 min). B is
+    # wheelsoff_gain_nodep.
+    "predeparture_a": dict(
+        numeric=[c + "_cap300" if c in ("prev_arr_delay", "inbound_overrun") else c for c in _V2],
+        encoder="frequency", onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"],
+        tasks=("regression",)),
+    "predeparture_c": dict(
+        numeric=[c + "_cap60" if c in ("prev_arr_delay", "inbound_overrun") else c for c in _V2],
+        encoder="frequency", onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"],
+        tasks=("classification",)),
     "predeparture_v3_cap300": dict(
         numeric=[c + "_cap300" if c in ("prev_arr_delay", "inbound_overrun") else c for c in _V2],
         encoder="frequency", onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
