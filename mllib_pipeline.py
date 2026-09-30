@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -271,6 +272,20 @@ def congestion_tables(spark):
     return origin_hour, dest_hour, origin_day
 
 
+CAP_SUFFIX = re.compile(r"^(?P<base>.+)_cap(?P<cap>\d+)$")
+
+
+def capped(numeric) -> dict:
+    """{"prev_arr_delay_cap60": ("prev_arr_delay", 60), ...} for the capped columns
+    of a feature set. dep_delay_cap120 has its own stage (its base is DEPARTURE_DELAY)."""
+    out = {}
+    for c in numeric:
+        m = CAP_SUFFIX.match(c)
+        if m and c != "dep_delay_cap120":
+            out[c] = (m.group("base"), int(m.group("cap")))
+    return out
+
+
 def add_context_features(spark, full_df, frame, numeric, first_leg_zero: bool = False):
     """Join the row-external features a feature set needs onto ``frame``.
 
@@ -280,7 +295,8 @@ def add_context_features(spark, full_df, frame, numeric, first_leg_zero: bool = 
     computed once from the full data and joined by key. A left join keeps every
     row of ``frame``, so a train/test split made before this call is unchanged.
     """
-    need = set(numeric)
+    # A capped rotation column still needs its base column joined.
+    need = set(numeric) | {base for base, _ in capped(numeric).values()}
     joined = bool(need & (set(ROTATION_COLS) | set(CONGESTION_COLS)))
     if need & set(ROTATION_COLS):
         frame = frame.join(rotation_table(full_df), FLIGHT_KEY, "left")
@@ -422,6 +438,17 @@ FEATURE_SETS.update({
     # on three seeds). MONTH stays one-hot. See experiments/LOG.md, runs D to H.
     "predeparture_v3": dict(numeric=list(_V2), encoder="frequency",
                             onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    # v3 with the inbound delay capped where the outcome saturates (2026-09-30): the
+    # share of flights more than 30 min late is 99.7% once inbound_overrun passes
+    # 30 min, so above 60 nothing changes for the classifier (cap60); the mean
+    # delay keeps rising about one minute per minute until 5 h, where the relation
+    # breaks (404 flights, 55% late), so the regression cap is 300 (cap300).
+    "predeparture_v3_cap60": dict(
+        numeric=[c + "_cap60" if c in ("prev_arr_delay", "inbound_overrun") else c for c in _V2],
+        encoder="frequency", onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    "predeparture_v3_cap300": dict(
+        numeric=[c + "_cap300" if c in ("prev_arr_delay", "inbound_overrun") else c for c in _V2],
+        encoder="frequency", onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
     # Task B, regression at wheels-off on the minutes made up or lost after
     # pushback (label_gain). DEPARTURE_DELAY and TAXI_OUT are known then.
     # sched_mph: DISTANCE over scheduled block time, the schedule padding.
@@ -542,6 +569,13 @@ def _predeparture_stages(numeric: list) -> list:
         # Plain SQL, no Haversine UDF.
         stages.append(SQLTransformer(
             statement="SELECT *, DISTANCE / (SCHEDULED_TIME / 60.0) AS sched_mph FROM __THIS__"))
+    for col, (base, cap) in capped(numeric).items():
+        # A fixed upper bound read off the data, not a fitted fence: above it the
+        # outcome no longer changes (experiments/LOG.md, 2026-09-30). LEAST skips
+        # nulls, so a missing value is kept null for the Imputer.
+        stages.append(SQLTransformer(
+            statement=f"SELECT *, CASE WHEN {base} IS NULL THEN NULL "
+                      f"ELSE LEAST({base}, {cap}) END AS {col} FROM __THIS__"))
     if "dep_delay_cap120" in numeric:
         # DEPARTURE_DELAY capped at two hours, a fixed common-sense bound, not a
         # fitted fence. The raw column stays in the frame: the gain target and the
