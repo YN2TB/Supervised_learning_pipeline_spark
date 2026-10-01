@@ -46,7 +46,7 @@ TASKS = {
               gbt="gbt_regressor__nopca", linear="linear_regression__nopca"),
     "C": dict(exp="flight-delay-final-c", fs="predeparture_c", label=mp.CLF_LABEL,
               gbt="gbt_classifier__nopca", linear="linear_svc__nopca"),
-    "B": dict(exp="flight-delay-final-b", fs="wheelsoff_gain_nodep", label=mp.GAIN_LABEL,
+    "B": dict(exp="flight-delay-final-b-pad", fs="wheelsoff_gain_pad", label=mp.GAIN_LABEL,
               gbt="gbt_regressor__nopca", linear="linear_regression__nopca"),
 }
 

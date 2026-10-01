@@ -260,6 +260,35 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+## 2026-10-01 · Task B with DISTANCE + sched_padding (flight-delay-final-b-pad)
+
+The four schedule columns of `wheelsoff_gain_nodep` (DISTANCE, log_distance, SCHEDULED_TIME,
+sched_mph) had VIF 104 to 507, and the linear model split their signal into cancelling
+coefficients (DISTANCE +24, SCHEDULED_TIME -27 on the scaled features). The gain is exactly
+TAXI_OUT + AIR_TIME + TAXI_IN - SCHEDULED_TIME (100% of flights) and AIR_TIME is about
+17.1 + 0.117 x DISTANCE (R2 0.97), so what matters is the schedule padding.
+`wheelsoff_gain_pad` keeps DISTANCE and adds `sched_padding` = SCHEDULED_TIME - (a + b x
+DISTANCE), the line fitted on the training split by the new `SchedulePadding` Estimator
+(a 41.47, b 0.12182; VIF 1.0 and 2.6). Run with `--split day` and `--params-from
+flight-delay-final-b` (same split and hyperparameters as the final run), 21:41 to 22:13.
+
+| arm | MAE nodep -> pad | R2 nodep -> pad |
+|---|---|---|
+| GBT nopca | 6.281 -> **6.237** | 0.516 -> **0.520** |
+| RF nopca | 7.044 -> 6.798 | 0.428 -> 0.455 |
+| LR / GLM nopca | 6.652 -> 6.678 | 0.474 -> 0.470 |
+| GBT pca | 7.311 -> 7.109 | 0.397 -> 0.423 |
+| RF pca | 7.497 -> 7.297 | 0.374 -> 0.399 |
+| LR / GLM pca | 7.588 -> 7.321 | 0.360 -> 0.394 |
+
+- Linear models tie (0.003 R2, under the 0.005 rule); the trees gain, RF most (+0.027).
+- Every PCA arm gains about 0.03 R2: PCA over the four columns had folded them into one
+  "long or short" direction and lost the padding, as suspected.
+- 1% check before the run (validation split): LR -0.004, GBT -0.003, RF +0.020.
+- **Decided:** task B uses `wheelsoff_gain_pad`. The OLS coefficient of sched_padding is about
+  -0.43 min of gain per minute: part of the extra schedule pays for expected headwind and
+  taxi time at congested origins (LGA to MDW is scheduled 30 min longer than MDW to LGA).
+
 ## 2026-09-30 to 10-01 · Final run (full data, day split): wide search on the no-PCA arm
 
 Experiments `flight-delay-final-a` (`predeparture_a`, cap 300), `flight-delay-final-c`
