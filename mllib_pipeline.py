@@ -63,6 +63,7 @@ SPLIT_SEED = 42
 SPLIT_MODES = ("val", "holdout", "day", "random")
 DEFAULT_SPLIT = "val"
 FOLD_COL = "cv_fold"
+GIT_TAGS: dict = {}          # filled by main() from git_tags()
 TEST_DAY_SHARE = 0.2
 DATA_YEAR = 2015
 
@@ -1149,6 +1150,30 @@ def resume_match(args) -> dict:
             "sample_fraction": args.sample_fraction, "seed": args.seed}
 
 
+def git_tags() -> dict:
+    """Branch and working-tree state, as MLflow tags.
+
+    MLflow already records the commit (mlflow.source.git.commit); these say
+    whether that commit is the code that actually ran. A run with uncommitted
+    changes to tracked .py files is tagged dirty and lists them.
+    """
+    import subprocess
+
+    here = os.path.dirname(os.path.abspath(__file__))
+
+    def git(*cmd):
+        return subprocess.run(["git", *cmd], cwd=here, capture_output=True,
+                              text=True, timeout=10).stdout.strip()
+    try:
+        status = git("status", "--porcelain", "--untracked-files=no").splitlines()
+        changed = [line[3:] for line in status if line[3:].endswith(".py")]
+        return {"git.branch": git("rev-parse", "--abbrev-ref", "HEAD"),
+                "git.dirty": str(bool(changed)).lower(),
+                "git.dirty_files": ", ".join(changed)[:500]}
+    except Exception as exc:  # noqa: BLE001 - provenance must never stop a run
+        return {"git.error": f"{type(exc).__name__}: {exc}"[:250]}
+
+
 def checkpoint(results: dict, failures: dict, out_dir: str = BENCH_DIR,
                split: str | None = None) -> None:
     """Persist progress after every arm, not just at the end of the loop.
@@ -1341,6 +1366,7 @@ def log_baselines(train, test, n_test: int, args) -> dict:
         metrics = {m: float(e.evaluate(preds)) for m, e in evaluators(task, label).items()}
         metrics.update(arrival_scale(preds, label))
         with mlflow.start_run(run_name=run_name):
+            mlflow.set_tags(GIT_TAGS)
             mlflow.log_params({"model": run_name.split("__")[0], "arm": "none", "task": task,
                                "label": label, "feature_set": args.feature_set,
                                "baseline": note, "test_rows": n_test,
@@ -1380,6 +1406,7 @@ def log_baselines(train, test, n_test: int, args) -> dict:
             run_name = f"rule_{col.lower()}_{task}__none"
             metrics = {m: float(e.evaluate(preds)) for m, e in evaluators(task, label).items()}
             with mlflow.start_run(run_name=run_name):
+                mlflow.set_tags(GIT_TAGS)
                 mlflow.log_params({"model": f"rule_{col.lower()}_{task}", "arm": "none",
                                    "task": task, "label": label,
                                    "feature_set": args.feature_set, "baseline": note,
@@ -1522,6 +1549,11 @@ def main() -> None:
     # autologging create nested runs from several threads at once.
     mlflow.set_tracking_uri(TRACKING_URI)
     exp = mlflow.set_experiment(args.experiment)
+    global GIT_TAGS
+    GIT_TAGS = git_tags()
+    if GIT_TAGS.get("git.dirty") == "true":
+        print(f"note: uncommitted changes in {GIT_TAGS['git.dirty_files']}; "
+              "the logged commit is not exactly the code that runs")
     if args.note:
         # Shown as the experiment's description in the MLflow UI, and kept on
         # every run as a tag, so a trial explains itself wherever it is opened.
@@ -1703,6 +1735,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                     cv.setFoldCol(FOLD_COL)
 
                 with mlflow.start_run(run_name=run_name):
+                    mlflow.set_tags(GIT_TAGS)
                     mlflow.log_params({
                         "model": name, "arm": arm, "task": spec["task"],
                         "label": spec["label"], "folds": args.folds,
