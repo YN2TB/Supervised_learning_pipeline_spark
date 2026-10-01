@@ -1,0 +1,21 @@
+{
+  "key": {
+    "feature_set": "predeparture_c",
+    "sample_fraction": 1.0,
+    "tune_fraction": 0.1,
+    "folds": 3,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "pca_scope": "numeric",
+    "class_weight": "balanced",
+    "experiment": "flight-delay-final-c",
+    "split": "day",
+    "seed": 42,
+    "search": "grid"
+  },
+  "best_params": {
+    "regParam": 0.01
+  },
+  "primary": "areaUnderROC",
+  "value": 0.8061254866070516
+}

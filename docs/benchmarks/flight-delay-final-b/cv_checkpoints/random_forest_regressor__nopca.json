@@ -1,0 +1,25 @@
+{
+  "key": {
+    "feature_set": "wheelsoff_gain_nodep",
+    "sample_fraction": 1.0,
+    "tune_fraction": 0.1,
+    "folds": 3,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "pca_scope": "numeric",
+    "class_weight": "balanced",
+    "experiment": "flight-delay-final-b",
+    "split": "day",
+    "seed": 42,
+    "search": "wide"
+  },
+  "best_params": {
+    "numTrees": 80,
+    "minInstancesPerNode": 1,
+    "featureSubsetStrategy": "all",
+    "subsamplingRate": 0.7,
+    "maxDepth": 10
+  },
+  "primary": "rmse",
+  "value": 9.703720563849318
+}

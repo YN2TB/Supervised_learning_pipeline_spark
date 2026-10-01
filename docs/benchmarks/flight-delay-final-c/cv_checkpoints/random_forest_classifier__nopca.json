@@ -1,0 +1,26 @@
+{
+  "key": {
+    "feature_set": "predeparture_c",
+    "sample_fraction": 1.0,
+    "tune_fraction": 0.1,
+    "folds": 3,
+    "pca_variance": 0.9,
+    "pca_k": 10,
+    "pca_scope": "numeric",
+    "class_weight": "balanced",
+    "experiment": "flight-delay-final-c",
+    "split": "day",
+    "seed": 42,
+    "search": "wide"
+  },
+  "best_params": {
+    "numTrees": 80,
+    "minInstancesPerNode": 1,
+    "featureSubsetStrategy": "auto",
+    "subsamplingRate": 1.0,
+    "impurity": "gini",
+    "maxDepth": 10
+  },
+  "primary": "areaUnderROC",
+  "value": 0.8410627424868711
+}

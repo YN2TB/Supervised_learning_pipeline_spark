@@ -1113,11 +1113,21 @@ def resume_match(args) -> dict:
 
 
 def checkpoint(results: dict, failures: dict, out_dir: str = BENCH_DIR) -> None:
-    """Persist progress after every arm, not just at the end of the loop."""
+    """Persist progress after every arm, not just at the end of the loop.
+
+    Merged into the file already there, this run's arms winning: a tournament run
+    in passes (--arms nopca, then --arms pca) used to keep only the last pass.
+    """
     try:
         os.makedirs(out_dir, exist_ok=True)
-        with open(os.path.join(out_dir, "tournament_results.json"), "w") as fh:
-            json.dump(results, fh, indent=2)
+        target = os.path.join(out_dir, "tournament_results.json")
+        merged = {}
+        if os.path.exists(target):
+            with open(target) as fh:
+                merged = json.load(fh)
+        merged.update(results)
+        with open(target, "w") as fh:
+            json.dump(merged, fh, indent=2)
         if failures:
             with open(os.path.join(out_dir, "tournament_failures.json"), "w") as fh:
                 json.dump(failures, fh, indent=2)
