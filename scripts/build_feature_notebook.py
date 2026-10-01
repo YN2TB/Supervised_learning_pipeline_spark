@@ -203,7 +203,54 @@ display(d.loc[lg < -120, show].sort_values("label_gain").head(10))
 display(d.loc[d["sched_mph"] < 60, show[:5] + ["sched_mph"]].head(10))"""),
 ]
 
-cells.append(md("""## 6. Kết luận: có vấn đề gì không
+cells.append(md("""## 6. Bài B: vì sao bỏ `DEPARTURE_DELAY` mà giữ `TAXI_OUT`
+
+`label_gain` là số phút bù lại (âm) hoặc mất thêm (dương) sau khi rời cổng. Hình trái và hình
+phải dùng chung trục dọc. Đường đậm là trung vị; dải đậm chứa 50% số chuyến ở giữa (25% đến
+75%), dải nhạt chứa 80% (10% đến 90%).
+
+- **`TAXI_OUT` (trái):** cả dải đi lên. Lăn lâu hơn thì gain *điển hình* lớn hơn, khoảng một
+  phút theo mỗi phút lăn. Cột này dịch chuyển giá trị kỳ vọng, nên model dùng được.
+- **`DEPARTURE_DELAY` (phải):** trung vị nằm ngang ở khoảng −6 phút dù rời cổng sớm hay trễ
+  10 tiếng; chỉ có dải là phình ra. Cột này không đổi giá trị kỳ vọng, chỉ đổi độ bất định,
+  nên một model đoán một con số (tối ưu sai số bình phương) không dùng được nó."""))
+cells.append(code("""def fan(ax, x, y, edges, xlabel, title, min_n=300):
+    b = pd.cut(x, edges)
+    g = y.groupby(b, observed=True)
+    q = g.quantile([0.1, 0.25, 0.5, 0.75, 0.9]).unstack()
+    n = g.size()
+    q = q[n >= min_n]
+    mids = [(iv.left + iv.right) / 2 for iv in q.index]
+    ax.fill_between(mids, q[0.1], q[0.9], color=BLUE, alpha=0.18, linewidth=0, label="10% đến 90% số chuyến")
+    ax.fill_between(mids, q[0.25], q[0.75], color=BLUE, alpha=0.40, linewidth=0, label="25% đến 75%")
+    ax.plot(mids, q[0.5], color=BLUE, linewidth=2, marker="o", markersize=4, label="trung vị")
+    ax.axhline(0, color=INK_2, linewidth=1, linestyle="--")
+    _style(ax, xlabel, "label_gain (phút)", title)
+
+fig, axes = plt.subplots(1, 2, figsize=(13, 4.6), sharey=True)
+fan(axes[0], d["TAXI_OUT"], d["label_gain"],
+    [0, 5, 10, 15, 20, 25, 30, 40, 50, 60, 75, 90, 120, 150, 180],
+    "TAXI_OUT (phút)", "Theo TAXI_OUT: cả dải đi lên")
+fan(axes[1], d["DEPARTURE_DELAY"], d["label_gain"],
+    [-30, -10, 0, 10, 20, 30, 45, 60, 90, 120, 180, 240, 300, 420, 600],
+    "DEPARTURE_DELAY (phút)", "Theo DEPARTURE_DELAY: trung vị nằm ngang, dải phình ra")
+axes[0].legend(frameon=False, fontsize=8.5, loc="upper left")
+fig.tight_layout(); plt.show()"""))
+cells.append(code("""bands = [("rời cổng sớm hoặc đúng giờ", d["DEPARTURE_DELAY"] <= 0),
+         ("trễ 30 đến 60 phút", d["DEPARTURE_DELAY"].between(31, 60)),
+         ("trễ 3 đến 5 tiếng", d["DEPARTURE_DELAY"].between(181, 300))]
+fig, axes = plt.subplots(1, 3, figsize=(13, 3.6), sharex=True, sharey=True)
+for ax, (name, mask) in zip(axes, bands):
+    v = d.loc[mask, "label_gain"]
+    ax.hist(v[(v >= -60) & (v <= 80)], bins=70, density=True, color=BLUE, alpha=0.9)
+    ax.axvline(v.median(), color=INK_2, linestyle="--", linewidth=1)
+    ax.text(0.98, 0.95, f"{len(v):,} chuyến\\ntrung vị {v.median():.0f} phút\\nđộ lệch chuẩn {v.std():.1f}",
+            transform=ax.transAxes, ha="right", va="top", fontsize=8.5, color=INK_2)
+    _style(ax, "label_gain (phút)", "tỷ lệ", name)
+fig.suptitle("Cùng tâm, khác độ rộng: gain ở ba mức trễ lúc rời cổng", x=0.01, ha="left", color=INK, fontsize=12)
+fig.tight_layout(); plt.show()"""))
+
+cells.append(md("""## 7. Kết luận: có vấn đề gì không
 
 **Không có lỗi dữ liệu nào đáng sửa.** Những gì bị gắn cờ đều là thiết kế, sự kiện có thật,
 hoặc lỗi lẻ tẻ quá ít để ảnh hưởng model.
