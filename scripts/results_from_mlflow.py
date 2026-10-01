@@ -33,9 +33,12 @@ def rebuild(experiment: str) -> dict:
         if run.info.status != "FINISHED" or "arm" not in p or "__" not in (run.info.run_name or ""):
             continue
         entry = {"arm": p["arm"], "model": p.get("model", run.info.run_name.split("__")[0]),
-                 "task": p.get("task")}
+                 "task": p.get("task"), "split": p.get("split", "random")}
         entry.update({k: m[k] for k in m if k in KEEP or k.startswith(("recall_at_", "precision_at_"))})
         entry.update({k: _num(v) for k, v in p.items() if k.startswith("best_") and "." not in k})
+        for k in m:
+            if k.startswith("cv_best_"):
+                entry["cv_metric"], entry["cv_value"] = k[len("cv_best_"):], m[k]
         out[run.info.run_name] = entry          # later runs overwrite earlier ones
     return out
 

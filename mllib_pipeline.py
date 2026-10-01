@@ -49,11 +49,20 @@ MODEL_DIR = path("models")
 BENCH_DIR = path("docs", "benchmarks")
 REGISTERED_MODEL = "flight_delay_pipeline"
 SPLIT_SEED = 42
-# How train and test are separated (make_split). "day": in every month a random
-# 20% of its days are test, so no day has flights on both sides. "random": the
-# row-level randomSplit every run before 2026-09-28 used; kept to reproduce them.
-SPLIT_MODES = ("day", "random")
-DEFAULT_SPLIT = "day"
+# How the days are separated (make_split). Whole days only, so no day has
+# flights on both sides of a split.
+#   val      train | validation. For anything that chooses: ablations, caps,
+#            hyperparameters, which model wins. The default.
+#   holdout  train + validation | holdout. Only for the final reported numbers,
+#            run once after every choice is made.
+#   day      train + holdout | validation. Every run from 2026-09-28 to 10-01
+#            (the ablations, the two tournaments); kept to reproduce them. Its
+#            "test" days are today's validation days: they were used to choose,
+#            which is why the holdout days exist.
+#   random   the row-level randomSplit of every run before 2026-09-28.
+SPLIT_MODES = ("val", "holdout", "day", "random")
+DEFAULT_SPLIT = "val"
+FOLD_COL = "cv_fold"
 TEST_DAY_SHARE = 0.2
 DATA_YEAR = 2015
 
@@ -961,7 +970,8 @@ def widen_search(grid: dict, args) -> None:
 
 
 def test_days(seed: int = SPLIT_SEED, share: float = TEST_DAY_SHARE) -> list:
-    """The test days: in every month, a random share of its days, fixed by the seed.
+    """The validation days (the "test" days of --split day): in every month, a random
+    share of its days, fixed by the seed.
 
     Rounded per month, so 6 days in each month of 2015 (72 of 365, 19.7%).
     Returned as MONTH * 100 + DAY.
@@ -973,6 +983,27 @@ def test_days(seed: int = SPLIT_SEED, share: float = TEST_DAY_SHARE) -> list:
     for month in range(1, 13):
         n = calendar.monthrange(DATA_YEAR, month)[1]
         days += [month * 100 + d for d in sorted(rng.sample(range(1, n + 1), round(n * share)))]
+    return days
+
+
+validation_days = test_days
+
+
+def holdout_days(seed: int = SPLIT_SEED, share: float = TEST_DAY_SHARE) -> list:
+    """The final test days: in every month as many days as validation_days, drawn
+    from the days that are not validation days. Before 2026-10-01 they were always
+    training days, so no evaluation and no choice has ever looked at them.
+    Returned as MONTH * 100 + DAY.
+    """
+    import calendar
+    import random
+    rng = random.Random(seed + 10_000)
+    val = set(test_days(seed, share))
+    days = []
+    for month in range(1, 13):
+        n = calendar.monthrange(DATA_YEAR, month)[1]
+        free = [d for d in range(1, n + 1) if month * 100 + d not in val]
+        days += [month * 100 + d for d in sorted(rng.sample(free, round(n * share)))]
     return days
 
 
@@ -997,7 +1028,8 @@ def make_split(df, sample_fraction: float = 1.0, mode: str = DEFAULT_SPLIT,
     BEFORE the split, so a caller that forgets it gets a different partition of
     the data and silently mixes training rows into what it calls the test set.
 
-    mode="day" (default since 2026-09-28): whole days go to test, 20% of the days
+    mode="day" (2026-09-28 to 10-01; "val" and "holdout" since, see SPLIT_MODES):
+    whole days go to test, 20% of the days
     of every month (test_days). Flights on one day share its weather, its airport
     congestion and its aircraft rotations (prev_arr_delay of one leg is the label
     of the leg before), so a row-level split puts near-copies of each test day in
@@ -1015,12 +1047,17 @@ def make_split(df, sample_fraction: float = 1.0, mode: str = DEFAULT_SPLIT,
         if sample_fraction < 1.0:
             df = df.sample(False, sample_fraction, seed=seed)
         return df.randomSplit([0.8, 0.2], seed=seed)
-    if mode != "day":
+    if mode not in SPLIT_MODES:
         raise ValueError(f"unknown split mode {mode!r}; expected one of {SPLIT_MODES}")
     if sample_fraction < 1.0:
         df = hash_sample(df, sample_fraction, seed)
-    in_test = (F.col("MONTH") * 100 + F.col("DAY")).isin(test_days(seed))
-    return df.filter(~in_test), df.filter(in_test)
+    day = F.col("MONTH") * 100 + F.col("DAY")
+    in_val, in_hold = day.isin(test_days(seed)), day.isin(holdout_days(seed))
+    if mode == "holdout":
+        return df.filter(~in_hold), df.filter(in_hold)
+    if mode == "val":
+        return df.filter(~in_val & ~in_hold), df.filter(in_val)
+    return df.filter(~in_val), df.filter(in_val)          # "day", the legacy split
 
 
 def evaluators(task: str, label: str):
@@ -1112,11 +1149,15 @@ def resume_match(args) -> dict:
             "sample_fraction": args.sample_fraction, "seed": args.seed}
 
 
-def checkpoint(results: dict, failures: dict, out_dir: str = BENCH_DIR) -> None:
+def checkpoint(results: dict, failures: dict, out_dir: str = BENCH_DIR,
+               split: str | None = None) -> None:
     """Persist progress after every arm, not just at the end of the loop.
 
     Merged into the file already there, this run's arms winning: a tournament run
     in passes (--arms nopca, then --arms pca) used to keep only the last pass.
+    Every entry carries its split, and entries from another split are dropped
+    rather than merged, so a validation run and a holdout run in one experiment
+    never end up in one table.
     """
     try:
         os.makedirs(out_dir, exist_ok=True)
@@ -1125,6 +1166,9 @@ def checkpoint(results: dict, failures: dict, out_dir: str = BENCH_DIR) -> None:
         if os.path.exists(target):
             with open(target) as fh:
                 merged = json.load(fh)
+        if split is not None:
+            results = {k: dict(v, split=split) for k, v in results.items()}
+            merged = {k: v for k, v in merged.items() if v.get("split", "day") == split}
         merged.update(results)
         with open(target, "w") as fh:
             json.dump(merged, fh, indent=2)
@@ -1183,7 +1227,8 @@ def cv_checkpoint_key(args) -> dict:
             "pca_scope": args.pca_scope,
             "class_weight": args.class_weight, "experiment": args.experiment,
             "split": args.split, "seed": args.seed,
-            "search": getattr(args, "search", "grid")}
+            "search": getattr(args, "search", "grid"),
+            "folds_by": "row" if args.split in ("random", "day") else "day"}
 
 
 def load_cv_checkpoint(args, run_name: str):
@@ -1365,8 +1410,10 @@ def main() -> None:
                     help="sample, test days, tuning sample, CV folds and tree seeds; "
                          "change it to measure run-to-run noise")
     ap.add_argument("--split", default=DEFAULT_SPLIT, choices=SPLIT_MODES,
-                    help="day: 20%% of the days of every month are test (default); "
-                         "random: the old row-level randomSplit")
+                    help="val: train | validation days, for anything that chooses (default); "
+                         "holdout: train + validation | holdout days, the final numbers only, "
+                         "once; day: the 2026-09-28 to 10-01 split; random: the old "
+                         "row-level randomSplit")
     ap.add_argument("--parallelism", type=int, default=4)
     ap.add_argument("--feature-set", default=DEFAULT_FEATURE_SET,
                     choices=sorted(FEATURE_SETS),
@@ -1561,8 +1608,16 @@ def main() -> None:
         # before the metric value is.
         tune = (train if args.tune_fraction >= 1.0
                 else (hash_sample(train, args.tune_fraction, args.seed + 1)
-                      if args.split == "day"
-                      else train.sample(False, args.tune_fraction, seed=args.seed)).cache())
+                      if args.split != "random"
+                      else train.sample(False, args.tune_fraction, seed=args.seed)))
+        if args.split not in ("random", "day"):
+            # Cross-validation folds by day as well: a fold holding some of a
+            # day's flights would be scored on the day's own weather and
+            # rotations. The two legacy splits keep their row-level folds so
+            # their CV checkpoints still match.
+            tune = tune.withColumn(FOLD_COL, F.pmod(
+                F.xxhash64("MONTH", "DAY", F.lit(args.seed)), F.lit(args.folds)).cast("int"))
+        tune = tune.cache()
         n_tune = tune.count()
         print(f"tuning on {n_tune:,} rows ({args.tune_fraction:.1%} of train)\n")
 
@@ -1580,14 +1635,14 @@ def main() -> None:
 
         results, failures = {}, {}
         results.update(log_baselines(train, test, n_test, args))
-        checkpoint(results, failures, args.out_dir)
+        checkpoint(results, failures, args.out_dir, args.split)
         try:
             run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                      already_done, results, failures)
         except (Paused, KeyboardInterrupt, SparkDied) as stop:
             if mlflow.active_run():
                 mlflow.end_run(status="KILLED")
-            checkpoint(results, failures, args.out_dir)
+            checkpoint(results, failures, args.out_dir, args.split)
             how = (f"paused {stop}" if isinstance(stop, Paused)
                    else f"stopped: {stop}" if isinstance(stop, SparkDied)
                    else "interrupted (Ctrl+C)")
@@ -1619,7 +1674,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
             if args.resume and run_name in already_done:
                 results[run_name] = already_done[run_name]
                 print(f"  {arm:<5} skipped - already complete")
-                checkpoint(results, failures, args.out_dir)
+                checkpoint(results, failures, args.out_dir, args.split)
                 continue
             if pause_requested():
                 raise Paused(f"before {run_name}")
@@ -1644,6 +1699,8 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                     parallelism=args.parallelism,
                     seed=args.seed,
                     collectSubModels=False)
+                if FOLD_COL in tune.columns:
+                    cv.setFoldCol(FOLD_COL)
 
                 with mlflow.start_run(run_name=run_name):
                     mlflow.log_params({
@@ -1740,7 +1797,8 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                         out_dir=args.out_dir)
 
                     results[run_name] = dict(metrics, model=name, arm=arm,
-                                             task=spec["task"], **{
+                                             task=spec["task"], cv_metric=primary,
+                                             cv_value=cv_value, **{
                                                  f"best_{k}": v
                                                  for k, v in best_params.items()})
                     print(f"  {arm:<5} " + "  ".join(
@@ -1757,7 +1815,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                     raise
                 if mlflow.active_run():
                     mlflow.end_run(status="FAILED")
-                checkpoint(results, failures, args.out_dir)
+                checkpoint(results, failures, args.out_dir, args.split)
                 if not spark_alive(train):
                     # An OutOfMemoryError in the JVM shuts the SparkContext down.
                     # Every later arm would then "fail" in milliseconds for no
@@ -1772,7 +1830,7 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
             if freed:
                 print(f"  {'':<5} released {freed} cached frame(s)")
 
-            checkpoint(results, failures, args.out_dir)
+            checkpoint(results, failures, args.out_dir, args.split)
 
 
 def _finish(results: dict, args) -> None:
@@ -1807,8 +1865,18 @@ def register_winner(results: dict, args) -> None:
             print(f"warning: no regression arm matched --register-arm {want}; "
                   f"falling back to all {len(reg)} regression arms")
 
-    best_name = min(reg, key=lambda k: reg[k]["rmse"])
-    print(f"\nbest regression pipeline: {best_name} (rmse={reg[best_name]['rmse']:.4f})")
+    # Chosen on the cross-validation RMSE (training days only), never on the
+    # test metric: choosing on test makes the reported number optimistic.
+    # Results from before 2026-10-01 carry no cv_value; they fall back to test
+    # RMSE with a warning.
+    if all("cv_value" in v for v in reg.values()):
+        best_name = min(reg, key=lambda k: reg[k]["cv_value"])
+        print(f"\nbest regression pipeline: {best_name} (CV rmse="
+              f"{reg[best_name]['cv_value']:.4f}, test rmse={reg[best_name]['rmse']:.4f})")
+    else:
+        best_name = min(reg, key=lambda k: reg[k]["rmse"])
+        print("\nwarning: no CV metric in these results; choosing on test RMSE")
+        print(f"best regression pipeline: {best_name} (rmse={reg[best_name]['rmse']:.4f})")
 
     client = MlflowClient()
     exp = client.get_experiment_by_name(args.experiment)
