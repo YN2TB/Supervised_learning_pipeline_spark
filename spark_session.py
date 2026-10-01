@@ -77,6 +77,7 @@ OFFICIAL_EXPERIMENTS = {
     # The final run: the chosen set of each task, wide search on the no-PCA arm.
     "flight-delay-final-a": ("docs", "benchmarks", "flight-delay-final-a"),
     "flight-delay-final-b": ("docs", "benchmarks", "flight-delay-final-b"),
+    "flight-delay-final-b-pad": ("docs", "benchmarks", "flight-delay-final-b-pad"),
     "flight-delay-final-c": ("docs", "benchmarks", "flight-delay-final-c"),
 }
 

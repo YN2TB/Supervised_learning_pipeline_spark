@@ -607,6 +607,76 @@ class FrequencyEncoder(Estimator, HasInputCols, HasOutputCols,
 
 
 # ---------------------------------------------------------------------------
+# SchedulePadding
+# ---------------------------------------------------------------------------
+class _SchedulePaddingParams(Params):
+    distanceCol = Param(Params._dummy(), "distanceCol", "route distance column (miles)",
+                        typeConverter=TypeConverters.toString)
+    scheduledCol = Param(Params._dummy(), "scheduledCol",
+                         "scheduled gate-to-gate minutes column",
+                         typeConverter=TypeConverters.toString)
+
+
+class SchedulePaddingModel(Model, HasOutputCol, _SchedulePaddingParams,
+                           DefaultParamsReadable, DefaultParamsWritable):
+    """scheduled - (intercept + slope * distance), with the line frozen at fit time."""
+
+    intercept = Param(Params._dummy(), "intercept", "fitted minutes at zero distance",
+                      typeConverter=TypeConverters.toFloat)
+    slope = Param(Params._dummy(), "slope", "fitted minutes per mile",
+                  typeConverter=TypeConverters.toFloat)
+
+    @keyword_only
+    def __init__(self, distanceCol="DISTANCE", scheduledCol="SCHEDULED_TIME",
+                 outputCol="sched_padding", intercept=0.0, slope=0.0):
+        super().__init__()
+        self._set(**self._input_kwargs)
+
+    def _transform(self, dataset: DataFrame) -> DataFrame:
+        norm = (F.lit(self.getOrDefault(self.intercept))
+                + F.lit(self.getOrDefault(self.slope))
+                * F.col(self.getOrDefault(self.distanceCol)).cast("double"))
+        return dataset.withColumn(
+            self.getOutputCol(),
+            F.col(self.getOrDefault(self.scheduledCol)).cast("double") - norm)
+
+
+class SchedulePadding(Estimator, HasOutputCol, _SchedulePaddingParams,
+                      DefaultParamsReadable, DefaultParamsWritable):
+    """How much longer than usual this flight is scheduled for its distance.
+
+    Learns the industry schedule norm, scheduled = intercept + slope * distance, by
+    least squares on the training split, and outputs scheduled minus that norm.
+    Task B's target is TAXI_OUT + AIR_TIME + TAXI_IN - SCHEDULED_TIME, and AIR_TIME
+    grows with distance, so the gain depends on the DIFFERENCE between distance and
+    scheduled time. DISTANCE, log_distance, SCHEDULED_TIME and sched_mph carried that
+    difference at VIF 104 to 507, with opposite-sign coefficients; DISTANCE plus this
+    residual carry it at VIF about 1 and 2.6. Uses schedule columns only, no label.
+    """
+
+    @keyword_only
+    def __init__(self, distanceCol="DISTANCE", scheduledCol="SCHEDULED_TIME",
+                 outputCol="sched_padding"):
+        super().__init__()
+        self._setDefault(distanceCol="DISTANCE", scheduledCol="SCHEDULED_TIME",
+                         outputCol="sched_padding")
+        self._set(**self._input_kwargs)
+
+    def _fit(self, dataset: DataFrame) -> SchedulePaddingModel:
+        x = F.col(self.getOrDefault(self.distanceCol)).cast("double")
+        y = F.col(self.getOrDefault(self.scheduledCol)).cast("double")
+        row = dataset.select(x.alias("x"), y.alias("y")).dropna().agg(
+            F.covar_samp("x", "y").alias("cxy"), F.var_samp("x").alias("vx"),
+            F.avg("x").alias("mx"), F.avg("y").alias("my")).first()
+        slope = float(row["cxy"] / row["vx"])
+        return SchedulePaddingModel(
+            distanceCol=self.getOrDefault(self.distanceCol),
+            scheduledCol=self.getOrDefault(self.scheduledCol),
+            outputCol=self.getOutputCol(),
+            intercept=float(row["my"] - slope * row["mx"]), slope=slope)
+
+
+# ---------------------------------------------------------------------------
 # RowMatrixPCA
 # ---------------------------------------------------------------------------
 class _RowMatrixPCAParams(Params):

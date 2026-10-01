@@ -39,7 +39,7 @@ import custom_transformers  # noqa: E402  (for release_caches between arms)
 import model_explain  # noqa: E402
 from custom_transformers import (  # noqa: E402
     FrequencyEncoder, HaversineTransformer, MaterializeCache, OutlierIQRTruncator,
-    RowMatrixPCA, SignedLog1pTransformer, TargetEncoder,
+    RowMatrixPCA, SchedulePadding, SignedLog1pTransformer, TargetEncoder,
 )
 from flight_schema import SEVERE_DELAY_THRESHOLD  # noqa: E402
 from spark_session import TRACKING_URI, build_spark, path, results_dir  # noqa: E402
@@ -520,6 +520,16 @@ FEATURE_SETS.update({
         + ["DISTANCE", "SCHEDULED_TIME", "sched_dest_hour"],
         encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
         tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
+    # wheelsoff_gain_nodep without its four collinear schedule columns (DISTANCE,
+    # log_distance, SCHEDULED_TIME, sched_mph: VIF 104 to 507, opposite-sign
+    # coefficients). DISTANCE stays; sched_padding (scheduled minus the usual block
+    # time for the distance) carries the difference the gain depends on. VIF about
+    # 1 and 2.6; OLS on the validation days lost 0.002 R2 (2026-10-01).
+    "wheelsoff_gain_pad": dict(
+        numeric=[c for c in _GAIN if c not in ("DEPARTURE_DELAY", "log_distance", "sched_mph")]
+        + ["DISTANCE", "sched_padding", "sched_dest_hour"],
+        encoder="frequency", horizon="wheelsoff", label=GAIN_LABEL,
+        tasks=("regression",), onehot=["MONTH", "DEP_HOUR"], cyclic=["hour"]),
     # One change each against wheelsoff_gain_plus: without DISTANCE (a tree splits
     # log_distance and DISTANCE identically; only a linear model can tell them
     # apart), and without the transformed pair (log_distance, sched_mph).
@@ -589,6 +599,10 @@ def _predeparture_stages(numeric: list) -> list:
     derived = {"log_gc_distance", "SCHEDULE_SPEED_MPH", "ROUTE_DETOUR"}
     if derived & set(numeric):
         stages.append(HaversineTransformer())
+    if "sched_padding" in numeric:
+        # Minutes scheduled beyond the usual block time for the distance, the
+        # line learned on the training split (custom_transformers.SchedulePadding).
+        stages.append(SchedulePadding())
     if "sched_mph" in numeric:
         # Scheduled speed from the published distance and block time: a low speed
         # means the airline padded the schedule, so there is time to make up.
@@ -1256,6 +1270,39 @@ def cv_checkpoint_key(args) -> dict:
             "folds_by": "row" if args.split in ("random", "day") else "day"}
 
 
+def _param_value(v: str):
+    """An MLflow param string back to the type a Spark Param expects."""
+    for cast in (int, float):
+        try:
+            return cast(v)
+        except ValueError:
+            pass
+    return {"true": True, "false": False}.get(v.lower(), v)
+
+
+def params_from_run(experiment: str, run_name: str):
+    """The best parameters an arm chose in another experiment, in checkpoint form.
+
+    The value is that run's CV metric, on its own feature set: kept so the results
+    carry a number, not comparable with this run's arms.
+    """
+    client = MlflowClient()
+    exp = client.get_experiment_by_name(experiment)
+    if exp is None:
+        return None
+    runs = client.search_runs(
+        [exp.experiment_id],
+        filter_string=f"tags.mlflow.runName = '{run_name}' and attributes.status = 'FINISHED'",
+        order_by=["attributes.start_time DESC"], max_results=1)
+    if not runs:
+        return None
+    r = runs[0]
+    best = {k[len("best_"):]: _param_value(v) for k, v in r.data.params.items()
+            if k.startswith("best_") and "." not in k}
+    cv = next((v for k, v in r.data.metrics.items() if k.startswith("cv_best_")), float("nan"))
+    return {"best_params": best, "value": float(cv), "run_id": r.info.run_id}
+
+
 def load_cv_checkpoint(args, run_name: str):
     f = cv_checkpoint_path(args, run_name)
     if not (args.resume and os.path.exists(f)):
@@ -1429,6 +1476,10 @@ def main() -> None:
     ap.add_argument("--tune-fraction", type=float, default=0.1,
                     help="fraction of TRAIN used for cross-validation search")
     ap.add_argument("--folds", type=int, default=5)
+    ap.add_argument("--params-from", default=None, metavar="EXPERIMENT",
+                    help="skip cross-validation: refit every arm with the best parameters "
+                         "its namesake chose in EXPERIMENT (for a feature-set change "
+                         "compared at fixed hyperparameters)")
     ap.add_argument("--search", default="grid", choices=["grid", "wide"],
                     help="grid: two values per parameter (the tournaments up to "
                          "2026-09-29); wide: more parameters, full grid for the linear "
@@ -1759,10 +1810,17 @@ def run_arms(wanted, specs, args, train, test, tune, n_train, n_test, n_tune,
                         mlflow.set_tag("note", args.note)
 
                     saved = load_cv_checkpoint(args, run_name)
+                    if saved is None and args.params_from:
+                        saved = params_from_run(args.params_from, run_name)
+                        if saved is None:
+                            raise RuntimeError(f"--params-from {args.params_from}: "
+                                               f"no finished run named {run_name}")
+                        mlflow.set_tag("params_from", f"{args.params_from}/{saved['run_id']}")
                     cv_model = None
                     if saved is not None:
                         best_params, cv_value = saved["best_params"], saved["value"]
-                        print(f"  {arm:<5} CV restored from checkpoint")
+                        print(f"  {arm:<5} CV skipped: parameters from "
+                              f"{saved.get('run_id', 'checkpoint')[:8]}")
                         mlflow.set_tag("cv_restored_from_checkpoint", "true")
                     else:
                         cv_model = cv.fit(tune)
