@@ -260,6 +260,30 @@ the 1% sample):
 - The run was stopped by Claude Code for low memory after the first two sets; the
   orphaned process finished the third on its own (memory had recovered to ~6 GB).
 
+## 2026-09-30 to 10-01 · Final run (full data, day split): wide search on the no-PCA arm
+
+Experiments `flight-delay-final-a` (`predeparture_a`, cap 300), `flight-delay-final-c`
+(`predeparture_c`, cap 60), `flight-delay-final-b` (`wheelsoff_gain_nodep`). Per task: no-PCA
+arm with `--search wide`, then PCA arm (numeric-only, 90% variance) with the standard grid;
+3 folds, parallelism 1, 12g heap, `--no-register`. 20:39 to 05:27, every pass exit 0 on its
+first attempt. Backup before the run: `backup_pre_final_20260930_203924/`.
+
+| Task | Best | Result | 29/09 tournament | Baseline |
+|---|---|---|---|---|
+| A | GBT no-PCA | MAE 15.85, RMSE 33.40, R² 0.375 | MAE 16.09, R² 0.363 | rule MAE 18.59, R² 0.219 |
+| C | GBT no-PCA | AUC 0.856, AUC-PR 0.672, top 10%: 53.5% caught, 68.3% right | AUC 0.848, AUC-PR 0.662 | rule AUC 0.761; chance AUC-PR 0.128 |
+| B | GBT no-PCA | MAE 6.28, RMSE 9.28, R² 0.516 (arrival 0.952) | MAE 6.59, R² 0.480 | physics MAE 6.88, R² 0.453 |
+
+- The wide search moved only GBT clearly (A −0.24 min MAE, C +0.008 AUC, B −0.31 min).
+  RandomForest no-PCA chose the same point as the grid (A MAE 16.168 both times);
+  LinearRegression/GLM gained under 0.02 R².
+- PCA arm (standard grid) is behind no-PCA for every tree model and within noise for the
+  linear ones.
+- Task B now beats the physics reference by 0.6 min MAE (was 0.29).
+- **Bug found:** each pass rewrote `tournament_results.json` with its own arms, so the
+  PCA pass erased the no-PCA results. `checkpoint()` now merges into the existing file;
+  the three files were rebuilt from MLflow with `scripts/results_from_mlflow.py`.
+
 ### 2026-09-30 · Kaggle M: capping the inbound delay at measured points (1%, day split, seed 42)
 
 Kernels `flight-delay-check-cap60` and `-cap300` (commit 0d996f1); outputs in
